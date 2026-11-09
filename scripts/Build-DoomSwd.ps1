@@ -114,6 +114,7 @@ char key[8] = {0};
         "-I$usb/ustd/common", "-I$usb/ustd/class/hid")
     $platformFlags = @('-Os', '-ffunction-sections', '-fdata-sections', '-DGD32F427',
         '-DUSE_USB_HS', '-DUSE_EMBEDDED_PHY', '-DHXTAL_VALUE=8000000U') + $includes
+    if ($UsbGame) { $platformFlags += '-DFIXFINDER_USB_GAME', '-DFIXFINDER_USB_VIDEO' }
     $boardObjects = @()
     if ($FixFinderLcd) {
         $platformFlags += '-DFIXFINDER_DOOM_DCS'
@@ -135,7 +136,6 @@ char key[8] = {0};
     $app = Join-Path $build 'app.o'
     $runtime = Join-Path $build 'runtime.o'
     $display = Join-Path $build 'display.o'
-    if ($UsbGame) { $platformFlags += '-DFIXFINDER_USB_GAME', '-DFIXFINDER_USB_VIDEO' }
     if ($Arcade) {
         $platformFlags += '-DFIXFINDER_ARCADE'
         if ($PacmanFromEmmc) {
@@ -235,11 +235,13 @@ doom_iwad_len:
     if ($UsbGame) {
         $gameHid = Join-Path $build 'game-hid.o'
         $video = Join-Path $build 'usb-video.o'
+        $input = Join-Path $build 'usb-input.o'
         Invoke-Gcc ($platformFlags + @('-c',
             'USB-Build-V8/custom_hid_core.c', '-o', $gameHid))
         Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/usb_video.c', '-o', $video))
+        Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/usb_input.c', '-o', $input))
         $objects = @($objects | Where-Object { (Split-Path -Leaf $_) -ne 'part_22.o' })
-        $objects += $gameHid, $video
+        $objects += $gameHid, $video, $input
         $layout += '-Wl,--defsym,__fixfinder_app_base=0x08008000'
     }
 

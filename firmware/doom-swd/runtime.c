@@ -8,6 +8,7 @@
 
 #include "gd32f4xx.h"
 #ifdef FIXFINDER_USB_VIDEO
+#include "usb_input.h"
 #include "usb_video.h"
 #endif
 #include "doomdef.h"
@@ -59,6 +60,9 @@ extern char __heap_end;
 void SysTick_Handler(void)
 {
     milliseconds++;
+#ifdef FIXFINDER_USB_VIDEO
+    doom_usb_input_tick();
+#endif
 #ifdef FIXFINDER_DOOM_DCS
     fixfinder_io_tick();
 #endif
@@ -125,11 +129,18 @@ void I_ProcessKeyEvents(void)
     };
     static uint32_t previous;
     uint32_t pressed = doom_test_buttons;
+#ifdef FIXFINDER_USB_VIDEO
+    pressed |= doom_usb_input_buttons();
+#endif
 #ifdef FIXFINDER_DOOM_BOARD
     pressed |= doom_board->read_buttons();
 #elif defined(FIXFINDER_DOOM_DCS)
 #ifdef FIXFINDER_ARCADE
-    if (fixfinder_arcade_exit(fixfinder_keys(milliseconds), milliseconds)) {
+    uint32_t exit_keys = fixfinder_physical_keys(milliseconds);
+#ifdef FIXFINDER_USB_VIDEO
+    if (doom_usb_input_keys() & USB_INPUT_RETURN) exit_keys = KEY_DOWN | KEY_BACK;
+#endif
+    if (fixfinder_arcade_exit(exit_keys, milliseconds)) {
         BOOT_COOKIE[0] = BOOT_GAME;
         BOOT_COOKIE[1] = ~BOOT_GAME;
         NVIC_SystemReset();

@@ -200,6 +200,12 @@ Install the latest DOOM build with `-UsbGame` and keep the scanner connected to 
 python -B scripts/View-FixFinderUsb.py --serial $serial
 ```
 
+Click the viewer window to give it keyboard focus. In the selector, use **Up / Down** or **W / S** to browse and **Enter** to launch. In arcade games, use the arrow keys or **WASD**. Press **R** to start another Pac-Man game. Hold **Backspace** for one second to return to the selector.
+
+The eMMC bonus games accept simultaneous keys using each game's four-button mapping. **Space** also acts as **Up** in those games, so you can steer and fire in Danm8ku.
+
+In DOOM, use **Up / Down** or **W / S** to move and **Left / Right** or **A / D** to turn. **Space** fires, **E** or **Enter** opens doors and activates switches, **Q / C** strafe, **Esc** opens the menu, and **Tab** toggles the map. Movement and action keys can be held together.
+
 ### Preview through the Pi
 
 Leave the Pi debug leads connected and use the ELF for the exact game build installed on the scanner. Run `arm-none-eabi-nm -S FixFinder-Doom-LCD-USB.elf` and find the addresses of `doom_frame` and `palette`. The frame is 38,400 bytes and the palette is 512 bytes.

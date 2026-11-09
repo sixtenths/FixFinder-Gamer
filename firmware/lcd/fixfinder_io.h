@@ -12,6 +12,7 @@ enum fixfinder_key {
 
 void fixfinder_io_init(void);
 uint32_t fixfinder_keys(uint32_t now);
+uint32_t fixfinder_physical_keys(uint32_t now);
 uint32_t fixfinder_buttons(uint32_t now);
 void fixfinder_health_led(int health);
 void fixfinder_beep(uint32_t duration_ms);

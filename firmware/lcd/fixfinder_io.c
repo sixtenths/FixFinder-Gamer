@@ -1,5 +1,8 @@
 #include "fixfinder_io.h"
 #include "../doom-swd/input.h"
+#ifdef FIXFINDER_USB_VIDEO
+#include "../doom-swd/usb_input.h"
+#endif
 #include "gd32f4xx.h"
 #include "gd32f4xx_gpio.h"
 #include "gd32f4xx_rcu.h"
@@ -130,7 +133,7 @@ void fixfinder_health_led(int health)
     }
 }
 
-uint32_t fixfinder_keys(uint32_t now)
+uint32_t fixfinder_physical_keys(uint32_t now)
 {
     static uint32_t candidate, stable, changed_at;
     uint32_t f = ~GPIO_ISTAT(GPIOF);
@@ -149,9 +152,20 @@ uint32_t fixfinder_keys(uint32_t now)
     return stable;
 }
 
+uint32_t fixfinder_keys(uint32_t now)
+{
+    uint32_t physical = fixfinder_physical_keys(now);
+#ifdef FIXFINDER_USB_VIDEO
+    uint32_t remote = doom_usb_input_keys();
+    if (remote & USB_INPUT_RETURN) return KEY_DOWN | KEY_BACK;
+    if (remote) return remote;
+#endif
+    return physical;
+}
+
 uint32_t fixfinder_buttons(uint32_t now)
 {
-    uint32_t stable = fixfinder_keys(now);
+    uint32_t stable = fixfinder_physical_keys(now);
     switch (stable) {
     case KEY_BACK | KEY_ENTER: return DOOM_BUTTON_FIRE;
     case KEY_ERASE | KEY_DOWN: return DOOM_BUTTON_USE;

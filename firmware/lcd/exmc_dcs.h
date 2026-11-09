@@ -112,17 +112,17 @@ static inline void start_panel(void (*delay_ms)(uint32_t), uint8_t orientation)
     delay_ms(30);
 }
 
-static inline void begin_panel_window(uint16_t x, uint16_t width, uint16_t height)
+static inline void begin_panel_window(uint16_t x, uint16_t y, uint16_t width, uint16_t height)
 {
     write_range(0x2a, x, x + width - 1U);
-    write_range(0x2b, 0, height - 1U);
+    write_range(0x2b, y, y + height - 1U);
     LCD_INDEX = 0x2c;
     __DSB();
 }
 
 static inline void begin_panel_frame(uint16_t width, uint16_t height)
 {
-    begin_panel_window(0, width, height);
+    begin_panel_window(0, 0, width, height);
 }
 
 #endif

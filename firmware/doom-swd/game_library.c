@@ -3,6 +3,8 @@
 #include "game_library.h"
 #include "arcade.h"
 #include "display.h"
+#include "input.h"
+#include "usb_input.h"
 #include "usb_video.h"
 #include "../lcd/fixfinder_io.h"
 #include "storage/ff.h"
@@ -166,16 +168,24 @@ bool fixfinder_library_play(unsigned int index,uint8_t *frame,const volatile uin
     uint32_t previous=15, deadline=*clock;
     unsigned int ticks=0;
     while (!vm->halt) {
-        uint32_t now=*clock, keys=fixfinder_keys(now);
-        if (fixfinder_arcade_exit(keys,now)) break;
+        uint32_t now=*clock, keys=fixfinder_physical_keys(now);
+        uint32_t remote=doom_usb_input_buttons();
+        uint32_t exit_keys=(doom_usb_input_keys()&USB_INPUT_RETURN)?KEY_DOWN|KEY_BACK:keys;
+        if (fixfinder_arcade_exit(exit_keys,now)) break;
+        if (exit_keys==(KEY_DOWN|KEY_BACK)) {
+            keys=0;
+        } else {
+            if (remote&DOOM_BUTTON_LEFT) keys|=KEY_BACK;
+            if (remote&DOOM_BUTTON_BACK) keys|=KEY_DOWN;
+            if (remote&(DOOM_BUTTON_RIGHT|DOOM_BUTTON_USE)) keys|=KEY_ENTER;
+            if (remote&(DOOM_BUTTON_FORWARD|DOOM_BUTTON_FIRE)) keys|=KEY_ERASE;
+        }
         memset(vm->keys,0,sizeof vm->keys);
-        if (keys!=(KEY_DOWN|KEY_BACK)) {
-            for (unsigned int i=0;i<4;++i) if (keys&(1u<<i)) {
-                vm->keys[e->keys[i]]=1;
-                if (vm->wait && !(previous&(1u<<i))) {
-                    vm->v[(unsigned int)vm->wait_reg]=e->keys[i];
-                    vm->wait=0;
-                }
+        for (unsigned int i=0;i<4;++i) if (keys&(1u<<i)) {
+            vm->keys[e->keys[i]]=1;
+            if (vm->wait && !(previous&(1u<<i))) {
+                vm->v[(unsigned int)vm->wait_reg]=e->keys[i];
+                vm->wait=0;
             }
         }
         previous=keys;

@@ -49,6 +49,7 @@ OF SUCH DAMAGE.
 #include "../firmware/usb-loader/protocol.h"
 #ifdef FIXFINDER_USB_VIDEO
 #include "../firmware/doom-swd/usb_video.h"
+#include "../firmware/doom-swd/usb_input.h"
 #undef DESC_LEN_REPORT
 #define DESC_LEN_REPORT              31U
 #undef CUSTOMHID_IN_PACKET
@@ -371,6 +372,7 @@ static uint8_t custom_hid_init(usb_dev *udev, uint8_t config_index)
     memset((void *)&hid_handler, 0U, sizeof(custom_hid_handler));
 #ifdef FIXFINDER_USB_VIDEO
     doom_usb_video_reset();
+    doom_usb_input_reset();
 #endif
 
     /* initialize the data TX endpoint */
@@ -410,6 +412,7 @@ static uint8_t custom_hid_deinit(usb_dev *udev, uint8_t config_index)
 {
 #ifdef FIXFINDER_USB_VIDEO
     doom_usb_video_reset();
+    doom_usb_input_reset();
 #endif
     /* deinitialize HID endpoints */
     usbd_ep_clear(udev, CUSTOMHID_IN_EP);
@@ -512,7 +515,7 @@ static uint8_t custom_hid_data_out(usb_dev *udev, uint8_t ep_num)
 #endif
 #ifdef FIXFINDER_USB_VIDEO
     if (udev->dev.transc_out[ep_num].xfer_count == 2U && hid->data[0] == 0x14U) {
-        doom_usb_video_request(hid->data[1]);
+        if (!doom_usb_input_request(hid->data[1])) doom_usb_video_request(hid->data[1]);
     }
 #endif
     /* Ignore output reports and rearm the OUT endpoint. */
