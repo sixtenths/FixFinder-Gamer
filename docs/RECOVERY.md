@@ -4,7 +4,17 @@
 
 If this is still a factory scanner, obtain and verify a restorable backup before writing anything. If SWD reads are blocked by read protection or the backup cannot be verified, stop. Changing protection can erase the factory firmware. This project’s V8 image is a recovery baseline for the experimental build, and restoring V8 will not bring back the original automotive firmware. Keep an intact factory scanner for diagnostics.
 
-Power both devices off to connect the three leads. J5 hole 1 is the square pad. Count toward hole 6 at the opposite end. Power the scanner separately through its USB data cable.
+Power both devices off to connect the three leads. Find **J5**, the row of six holes along the board edge beside the Kingston chip. Start at **hole 1**, the square pad, and count toward the opposite end. Power the scanner separately through its USB data cable.
+
+### Find the J5 holes
+
+[![Bare J5 holes on the component side, left of the Kingston chip. Hole 6 is at the top and the square pad for hole 1 is at the bottom.](photos/265.jpg)](photos/265.jpg)
+
+In the bare board photo, J5 is on the left. From top to bottom, the holes are **6 (ground), 5, 4, 3 (SWCLK), 2 (SWDIO), 1 (square pad)**.
+
+[![J5 with the three SWD leads attached along the lower board edge. The square pad for hole 1 is on the right and is empty.](photos/278.jpg)](photos/278.jpg)
+
+In the wired photo, J5 runs left to right along the bottom edge. The yellow lead is on **6 (ground)**, orange is on **3 (SWCLK)**, and teal is on **2 (SWDIO)**. The empty square pad at the right is **1**. Follow the hole numbers if your leads use different colors.
 
 | Scanner J5 | Raspberry Pi physical pin | Signal |
 | --- | --- | --- |
