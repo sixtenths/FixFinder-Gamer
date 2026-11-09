@@ -7,16 +7,13 @@ import struct
 import sys
 import time
 import zlib
+from fixfinder_image import GAME_BASE, GAME_CAPACITY, LOADER_PID, VID, validate_game
 
-VID = 0x28E9
-LOADER_PID = 0x028B
 GAME_PID = 0x028C
 VIDEO_GAME_PID = 0x028D
 REPORT_ID = 0x41
 REPORT_SIZE = 64
 CHUNK = 56
-GAME_BASE = 0x08008000
-GAME_CAPACITY = 0x08300000 - GAME_BASE
 INFO, BEGIN, WRITE, COMMIT, RUN = range(1, 6)
 WIFI_PORT = 5034
 
@@ -51,16 +48,6 @@ class WifiDevice:
 
     def close(self):
         self.stream.close()
-
-
-def validate_game(data):
-    if not 8 <= len(data) <= GAME_CAPACITY:
-        raise ValueError(f"Game must be 8 to {GAME_CAPACITY:,} bytes.")
-    stack, entry = struct.unpack_from("<II", data)
-    if not (0x20000000 < stack <= 0x2002FFF8 and stack % 8 == 0
-            and entry & 1 and GAME_BASE + 8 <= entry & ~1 < GAME_BASE + len(data)):
-        raise ValueError("The BIN is not linked for the FixFinder USB game slot at 0x08008000.")
-    return data + b"\xff" * (-len(data) % 4)
 
 
 def find_device(hid, pid, serial):

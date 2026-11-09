@@ -84,6 +84,25 @@ fi
 
 Use a sector download as shown. If the loader has no valid game yet, the display should settle on **USB LOADER READY**. Return to the [USB game install](SETUP.md#install-or-replace-the-game-over-usb) to load the one-map arcade. The Pi is only needed again for loader changes or SWD recovery.
 
+## Install the combined arcade image over SWD
+
+The [combined image](../downloads/FixFinder-Arcade-Flash.bin) writes the loader and the six-game arcade in one step. Use it only after the [read-only checks and backup](#check-the-scanner-over-swd) pass. It overwrites all touched main-flash sectors through the end of the game. For a scanner that already has the loader, use the [USB game installer](SETUP.md#install-or-replace-the-game-over-usb) with the game BIN.
+
+Copy `FixFinder-Arcade-Flash.bin` to the Pi and match its SHA-256 to the [published checksum](../downloads/SHA256SUMS). Use the `ffprobe` function from the read-only checks and the three UID words you recorded. If a tool asks to unlock read protection or erase the whole chip, cancel.
+
+```bash
+expected_uid='WORD1 WORD2 WORD3'
+actual_uid=$(ffprobe read b32 0x1FFF7A10 3 --format simple-hex)
+if [ "$actual_uid" = "$expected_uid" ]; then
+  ffprobe download FixFinder-Arcade-Flash.bin --binary-format bin \
+    --base-address 0x08000000 --verify && ffprobe reset
+else
+  printf '%s\n' 'Wrong scanner UID.'
+fi
+```
+
+After reset, the loader briefly shows its boot screen and launches the arcade. Power off both devices before disconnecting the Pi leads. You can then use the scanner over USB.
+
 ## Verify or restore the V8 recovery baseline
 
 ```powershell

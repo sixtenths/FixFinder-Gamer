@@ -29,6 +29,9 @@ $demo = & $builder -ToolchainBin $ToolchainBin -GameSdk -GameSource $example
 Copy-Item -LiteralPath (Join-Path $loader 'FixFinder-USB-Loader.bin') -Destination $bin
 Copy-Item -LiteralPath (Join-Path $arcade 'FixFinder-Arcade.bin') -Destination $bin
 Copy-Item -LiteralPath (Join-Path $demo 'FixFinder-Game.bin') -Destination (Join-Path $bin 'Pixel-Catcher.bin')
+python "$PSScriptRoot/fixfinder_image.py" (Join-Path $bin 'FixFinder-USB-Loader.bin') `
+    (Join-Path $bin 'FixFinder-Arcade.bin') (Join-Path $bin 'FixFinder-Arcade-Flash.bin') | Out-Host
+if ($LASTEXITCODE) { throw 'Could not assemble the one-file arcade image.' }
 Get-ChildItem -LiteralPath $bin -Filter '*.bin' | Sort-Object Name | ForEach-Object {
     '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName).Hash.ToLowerInvariant(), $_.Name
 } | Set-Content -LiteralPath (Join-Path $bin 'SHA256SUMS') -Encoding ascii
