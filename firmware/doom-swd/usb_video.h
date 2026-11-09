@@ -6,9 +6,11 @@
 #define VIDEO_REPORT_ID 0x42U
 #define VIDEO_REPORT_SIZE 64U
 #define VIDEO_REQUEST 0xc3U
+#define VIDEO_FIRST_BAND 0xc4U
+#define VIDEO_BANDS 4U
 
 void doom_usb_video_reset(void);
-void doom_usb_video_request(void);
+void doom_usb_video_request(uint8_t command);
 void doom_usb_video_sent(usb_dev *device);
 void doom_usb_video_capture(const uint8_t *frame, const uint8_t *palette);
 

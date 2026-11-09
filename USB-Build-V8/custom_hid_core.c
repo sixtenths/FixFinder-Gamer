@@ -511,9 +511,8 @@ static uint8_t custom_hid_data_out(usb_dev *udev, uint8_t ep_num)
     }
 #endif
 #ifdef FIXFINDER_USB_VIDEO
-    if (udev->dev.transc_out[ep_num].xfer_count == 2U &&
-        hid->data[0] == 0x14U && hid->data[1] == VIDEO_REQUEST) {
-        doom_usb_video_request();
+    if (udev->dev.transc_out[ep_num].xfer_count == 2U && hid->data[0] == 0x14U) {
+        doom_usb_video_request(hid->data[1]);
     }
 #endif
     /* Ignore output reports and rearm the OUT endpoint. */

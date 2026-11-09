@@ -9,6 +9,7 @@
 #define PALETTE_SIZE (256U * 3U)
 #define FRAME_SIZE (PALETTE_SIZE + HALF_SIZE * 2U)
 #define PAYLOAD_SIZE (VIDEO_REPORT_SIZE - 3U)
+#define BAND_ROWS (DOOM_FRAME_HEIGHT / VIDEO_BANDS)
 
 extern usb_core_driver custom_hid;
 
@@ -19,22 +20,34 @@ static uint8_t bottom[HALF_SIZE] __attribute__((section(".doom_video")));
 static uint8_t colors[PALETTE_SIZE];
 static uint8_t report[VIDEO_REPORT_SIZE] __attribute__((aligned(4)));
 static volatile enum { IDLE, REQUESTED, CAPTURING, SENDING } state;
-static bool next_requested;
+static volatile uint8_t requested_command;
+static uint8_t active_command;
+static uint8_t next_command;
 static uint16_t offset;
+
+static unsigned int transfer_size(void)
+{
+    return FRAME_SIZE + (active_command != VIDEO_REQUEST);
+}
 
 void doom_usb_video_reset(void)
 {
     state = IDLE;
-    next_requested = false;
+    next_command = 0;
 }
 
-void doom_usb_video_request(void)
+void doom_usb_video_request(uint8_t command)
 {
+    if (command != VIDEO_REQUEST &&
+        (command < VIDEO_FIRST_BAND || command >= VIDEO_FIRST_BAND + VIDEO_BANDS)) {
+        return;
+    }
     if (state == IDLE) {
+        requested_command = command;
         state = REQUESTED;
-    } else if (state == SENDING && offset >= FRAME_SIZE) {
+    } else if (state == SENDING && offset >= transfer_size()) {
         /* The host may request the next frame before the final IN callback. */
-        next_requested = true;
+        next_command = command;
     }
 }
 
@@ -45,6 +58,13 @@ static void send_chunk(usb_dev *device)
     report[2] = (uint8_t)(offset >> 8);
     for (unsigned int i = 0; i < PAYLOAD_SIZE; ++i) {
         unsigned int index = offset + i;
+        if (active_command != VIDEO_REQUEST) {
+            if (index == 0) {
+                report[i + 3] = active_command;
+                continue;
+            }
+            --index;
+        }
         if (index < PALETTE_SIZE) {
             report[i + 3] = colors[index];
         } else if (index < PALETTE_SIZE + HALF_SIZE) {
@@ -62,11 +82,12 @@ static void send_chunk(usb_dev *device)
 void doom_usb_video_sent(usb_dev *device)
 {
     if (state == SENDING) {
-        if (offset < FRAME_SIZE) {
+        if (offset < transfer_size()) {
             send_chunk(device);
         } else {
-            state = next_requested ? REQUESTED : IDLE;
-            next_requested = false;
+            requested_command = next_command;
+            state = next_command ? REQUESTED : IDLE;
+            next_command = 0;
         }
     }
 }
@@ -79,21 +100,29 @@ void doom_usb_video_capture(const uint8_t *frame, const uint8_t *palette)
         __set_PRIMASK(irq);
         return;
     }
+    const uint8_t command = requested_command;
     state = CAPTURING;
     __set_PRIMASK(irq);
 
     memcpy(colors, palette, sizeof colors);
-    for (unsigned int y = 0; y < VIDEO_HEIGHT; ++y) {
-        uint8_t *row = (y < VIDEO_HEIGHT / 2 ? top : bottom) +
-                       (y % (VIDEO_HEIGHT / 2)) * VIDEO_WIDTH;
-        for (unsigned int x = 0; x < VIDEO_WIDTH; ++x) {
-            row[x] = frame[y * 2 * DOOM_FRAME_WIDTH + x * 2];
+    if (command == VIDEO_REQUEST) {
+        for (unsigned int y = 0; y < VIDEO_HEIGHT; ++y) {
+            uint8_t *row = (y < VIDEO_HEIGHT / 2 ? top : bottom) +
+                           (y % (VIDEO_HEIGHT / 2)) * VIDEO_WIDTH;
+            for (unsigned int x = 0; x < VIDEO_WIDTH; ++x) {
+                row[x] = frame[y * 2 * DOOM_FRAME_WIDTH + x * 2];
+            }
         }
+    } else {
+        const uint8_t *band = frame + (command - VIDEO_FIRST_BAND) * BAND_ROWS * DOOM_FRAME_WIDTH;
+        memcpy(top, band, sizeof top);
+        memcpy(bottom, band + sizeof top, sizeof bottom);
     }
 
     __disable_irq();
     if (state == CAPTURING) {
         offset = 0;
+        active_command = command;
         state = SENDING;
         send_chunk(&custom_hid);
     }

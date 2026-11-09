@@ -146,7 +146,7 @@ For hardware notes and recovery references, see [LCD bring-up](LCD.md), [the sta
 
 ## Preview the game on a PC
 
-Install the latest DOOM build with `-UsbGame` and keep the scanner connected to Windows through USB. Run the viewer with Python and Tkinter, using the serial shown above. The preview uses 120 × 80 pixels and keeps playing on the scanner while the window is open.
+Install the latest DOOM build with `-UsbGame` and keep the scanner connected to Windows through USB. Run the viewer with Python and Tkinter, using the serial shown above. The default preview shows all 240 × 160 pixels of the game frame. The scanner enlarges that same frame for its LCD. The viewer receives four strips, so quick movement can show a seam between strips. Use `--fast` for a smoother 120 × 80 preview.
 
 ```powershell
 python -B scripts/View-FixFinderUsb.py --serial $serial
