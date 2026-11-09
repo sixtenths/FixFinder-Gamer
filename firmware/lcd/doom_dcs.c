@@ -66,6 +66,11 @@ void doom_dcs_begin_native(void)
     begin_panel_frame(DOOM_LCD_WIDTH, DOOM_LCD_HEIGHT);
 }
 
+void doom_dcs_begin_native_rows(unsigned int first)
+{
+    begin_panel_window(0, first, DOOM_LCD_WIDTH, DOOM_LCD_HEIGHT - first);
+}
+
 void doom_dcs_write_native(unsigned int row, const uint8_t *indices)
 {
     write_row(NULL, row, doom_display_native_row(indices));

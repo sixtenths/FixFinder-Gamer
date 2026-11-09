@@ -7,7 +7,6 @@ from pathlib import Path
 
 # CHIP-8 key numbers in FixFinder Back, Down, Enter, Erase order.
 GAMES = (
-    ("dinorun", "DINO RUN", (5, 5, 5, 5)),
     ("flightrunner", "FLIGHT RUNNER", (7, 8, 9, 5)),
     ("down8", "DOWN 8", (7, 5, 9, 5)),
     ("danm8ku", "DANM8KU", (7, 8, 9, 5)),

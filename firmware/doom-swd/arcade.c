@@ -3,15 +3,17 @@
 #include "game_library.h"
 #endif
 #include "display.h"
+#include "racer.h"
 #include "usb_video.h"
 #include "../lcd/fixfinder_io.h"
 #include "../usb-loader/screen_art.h"
 #include "../usb-loader/doom_logo.h"
+#include <stdlib.h>
 #include <string.h>
 
 enum color { BG, WHITE, MUTED, ORANGE, GREEN, RED, BLUE, YELLOW, PINK, PANEL,
              EDGE, INSET, BRAND = 16, DOOM_ART = 32, TEXT_PALETTE = 48 };
-enum game_id { DOOM, SNAKE, MAZE, PONG, BREAKOUT, GAME_COUNT };
+enum game_id { DOOM, SNAKE, MAZE, PONG, BREAKOUT, RACER, GAME_COUNT };
 enum { W = DOOM_FRAME_WIDTH, H = DOOM_FRAME_HEIGHT };
 
 static const uint8_t base_palette[768] = {
@@ -60,6 +62,7 @@ static const struct {
 #endif
     [PONG] = {"PONG", "SPORT", "ERASE UP  DOWN DOWN", BLUE},
     [BREAKOUT] = {"BREAKOUT", "PADDLE", "BACK LEFT  ENTER RIGHT", PINK},
+    [RACER] = {"NEON CIRCUIT", "RACING", "STEER  BOOST  BRAKE", ORANGE},
 };
 
 static const int dx[] = {1, 0, -1, 0};
@@ -560,6 +563,22 @@ static void illustration(uint8_t *frame, int x, int y, enum game_id game)
         box(frame,x+32,y+38,22,4,BLUE);
         break;
     }
+    case RACER:
+        for (int row=-10;row<=10;++row) {
+            int half=10-abs(row)/2;
+            box(frame,x+53-half,y+16+row,2*half+1,1,row<2?ORANGE:PINK);
+        }
+        for (int row=0;row<23;++row) {
+            int half=6+row;
+            box(frame,x+39-half,y+23+row,2*half+1,1,EDGE);
+            box(frame,x+39-half,y+23+row,2,1,PINK);
+            box(frame,x+39+half-1,y+23+row,2,1,PINK);
+        }
+        box(frame,x+32,y+34,15,7,BLUE);
+        box(frame,x+35,y+32,9,3,WHITE);
+        box(frame,x+33,y+39,3,2,RED);
+        box(frame,x+43,y+39,3,2,RED);
+        break;
     default: break;
     }
 }
@@ -698,6 +717,15 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                     break;
                 case PONG: paddle_game(frame,clock,false); break;
                 case BREAKOUT: paddle_game(frame,clock,true); break;
+                case RACER: {
+                    enum race_result result;
+                    do {
+                        result=fixfinder_race(clock);
+                        if (result==RACE_EXIT) break;
+                        hud(frame,RACER,0);
+                    } while (finish(frame,clock,result==RACE_FINISHED));
+                    break;
+                }
                 }
                 }
                 keys=fixfinder_keys(*clock);

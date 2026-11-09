@@ -15,6 +15,7 @@ void doom_display_set_palette(const uint8_t *rgb);
 void doom_display_present(const uint8_t *frame);
 const uint16_t *doom_display_native_row(const uint8_t *indices);
 void doom_dcs_begin_native(void);
+void doom_dcs_begin_native_rows(unsigned int first);
 void doom_dcs_write_native(unsigned int row, const uint8_t *indices);
 void doom_dcs_begin_native_span(unsigned int x, unsigned int width);
 void doom_dcs_write_native_span(unsigned int row, const uint8_t *indices,

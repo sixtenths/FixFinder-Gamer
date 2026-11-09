@@ -99,7 +99,8 @@ unsigned int fixfinder_library_init(void)
         end=e->offset+e->length;
     }
     f_close(&f);
-    if (ok) count=header.count;
+    if (ok) for (unsigned int i=0;i<header.count;++i)
+        if (strcmp(list[i].title,"DINO RUN")!=0) list[count++]=list[i];
     fixfinder_library_status(ok?1u:0x300u,count);
     return count;
 }
