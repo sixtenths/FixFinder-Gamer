@@ -21,8 +21,9 @@ def run_check(toolchain):
             [
                 str(toolchain / "arm-none-eabi-gcc.exe"),
                 "-mcpu=cortex-m4", "-mthumb", "-std=c11", "-Os", "-Wall", "-Wextra", "-Werror",
-                "-ffreestanding", "-nostdlib", "-Wl,-Ttext,0x08000000,-e,test_lcd",
-                "-Ifirmware/lcd", "firmware/lcd/hx8347.c", "tests/hx8347_mock.c",
+                "-ffreestanding", "-nostdlib", "-Wl,-Ttext,0x08000000,-Tbss,0x20000000,-e,test_lcd",
+                "-Ifirmware/lcd", "-Ifirmware/doom-swd", "firmware/lcd/hx8347.c",
+                "firmware/lcd/doom_hx8347.c", "firmware/doom-swd/display.c", "tests/hx8347_mock.c",
                 "-o", str(elf_path),
             ],
             cwd=root,
@@ -30,7 +31,7 @@ def run_check(toolchain):
         )
         cpu = Uc(UC_ARCH_ARM, UC_MODE_THUMB | UC_MODE_MCLASS)
         cpu.mem_map(0x07FFF000, 0x10000)
-        cpu.mem_map(0x20000000, 0x4000)
+        cpu.mem_map(0x20000000, 0x10000)
         with elf_path.open("rb") as stream:
             elf = ELFFile(stream)
             for segment in elf.iter_segments(type="PT_LOAD"):
@@ -38,7 +39,7 @@ def run_check(toolchain):
                     cpu.mem_write(segment["p_vaddr"], segment.data())
             entry = elf.header["e_entry"]
         stop = 0x0800E000
-        cpu.reg_write(UC_ARM_REG_SP, 0x20004000)
+        cpu.reg_write(UC_ARM_REG_SP, 0x20010000)
         cpu.reg_write(UC_ARM_REG_LR, stop | 1)
         cpu.emu_start(entry | 1, stop, timeout=5_000_000)
         if cpu.reg_read(UC_ARM_REG_PC) != stop:
@@ -46,7 +47,7 @@ def run_check(toolchain):
         result = cpu.reg_read(UC_ARM_REG_R0)
         if result != 0:
             raise SystemExit(f"LCD protocol check failed at case {result}")
-        print("Verified ID sampling, portrait and landscape RGB565 fills, and abort cleanup.")
+        print("Verified ID sampling, RGB565 fills, all 76,800 game-frame pixels, and abort cleanup.")
 
 
 if __name__ == "__main__":

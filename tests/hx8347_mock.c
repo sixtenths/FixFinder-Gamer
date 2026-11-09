@@ -1,4 +1,9 @@
 #include "hx8347.h"
+#include "display.h"
+
+static const uint8_t portrait_window[] = {0, 0, 0, 239, 0, 0, 1, 63};
+static const uint8_t landscape_window[] = {0, 0, 1, 63, 0, 0, 0, 239};
+static const uint16_t pattern_colors[] = {0xf800, 0x07e0, 0x001f};
 
 static struct {
     uint8_t reads[2];
@@ -7,8 +12,15 @@ static struct {
     unsigned int register_count;
     size_t width, height, rows, fail_row;
     uint16_t color;
-    bool streaming, ended, unexpected;
+    bool streaming, ended, unexpected, pattern;
 } mock;
+
+void doom_lcd_write_row(unsigned int row, const uint16_t *pixels)
+{
+    (void)row;
+    (void)pixels;
+    mock.unexpected = true;
+}
 
 static bool read_register(void *context, uint8_t index, uint8_t *value)
 {
@@ -42,7 +54,9 @@ static bool write_pixels(void *context, const uint16_t *pixels, size_t count)
         return false;
     }
     for (size_t i = 0; i < count; i++) {
-        if (pixels[i] != mock.color) {
+        const size_t pattern = (i * 3 / 4 + mock.rows * 2 / 3) % 3;
+        const uint16_t expected = mock.pattern ? pattern_colors[pattern] : mock.color;
+        if (pixels[i] != expected) {
             mock.unexpected = true;
             return false;
         }
@@ -65,20 +79,42 @@ static const struct hx8347_bus bus = {
     .end_pixels = end_pixels
 };
 
-static bool check_fill(bool landscape, uint16_t color, size_t fail_row)
+static void setup_frame(bool landscape, size_t fail_row)
 {
-    static const uint8_t portrait_window[] = {0, 0, 0, 239, 0, 0, 1, 63};
-    static const uint8_t landscape_window[] = {0, 0, 1, 63, 0, 0, 0, 239};
     mock.window = landscape ? landscape_window : portrait_window;
     mock.width = landscape ? 320 : 240;
     mock.height = landscape ? 240 : 320;
     mock.rows = mock.register_count = 0;
-    mock.color = color;
     mock.fail_row = fail_row;
-    mock.streaming = mock.ended = mock.unexpected = false;
-    const bool filled = hx8347_fill_rgb565(&bus, landscape, color);
-    return filled == (fail_row == 0) && mock.ended && !mock.streaming &&
-           !mock.unexpected && mock.rows == (fail_row ? fail_row : mock.height);
+    mock.streaming = mock.ended = mock.unexpected = mock.pattern = false;
+}
+
+static bool check_frame(bool sent)
+{
+    return sent == (mock.fail_row == 0) && mock.ended && !mock.streaming &&
+           !mock.unexpected && mock.rows == (mock.fail_row ? mock.fail_row : mock.height);
+}
+
+static bool check_fill(bool landscape, uint16_t color, size_t fail_row)
+{
+    setup_frame(landscape, fail_row);
+    mock.color = color;
+    return check_frame(hx8347_fill_rgb565(&bus, landscape, color));
+}
+
+static bool check_game_frame(size_t fail_row)
+{
+    static const uint8_t rgb[256 * 3] = {255, 0, 0, 0, 255, 0, 0, 0, 255};
+    static uint8_t indexed[DOOM_FRAME_HEIGHT * DOOM_FRAME_WIDTH];
+    for (unsigned int y = 0; y < DOOM_FRAME_HEIGHT; y++) {
+        for (unsigned int x = 0; x < DOOM_FRAME_WIDTH; x++) {
+            indexed[y * DOOM_FRAME_WIDTH + x] = (uint8_t)((x + y) % 3);
+        }
+    }
+    doom_display_set_palette(rgb);
+    setup_frame(true, fail_row);
+    mock.pattern = true;
+    return check_frame(doom_display_hx8347(indexed, &bus));
 }
 
 int test_lcd(void)
@@ -98,5 +134,7 @@ int test_lcd(void)
     if (!check_fill(false, 0xf800, 0)) return 5;
     if (!check_fill(true, 0x07e0, 0)) return 6;
     if (!check_fill(true, 0x001f, 4)) return 7;
+    if (!check_game_frame(0)) return 8;
+    if (!check_game_frame(4)) return 9;
     return 0;
 }

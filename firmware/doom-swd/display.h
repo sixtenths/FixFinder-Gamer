@@ -1,6 +1,7 @@
 #ifndef FIXFINDER_DOOM_DISPLAY_H
 #define FIXFINDER_DOOM_DISPLAY_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 enum {
@@ -12,6 +13,14 @@ enum {
 
 void doom_display_set_palette(const uint8_t *rgb);
 void doom_display_present(const uint8_t *frame);
+bool doom_display_stream(const uint8_t *frame,
+                         bool (*write_row)(const void *context, unsigned int row,
+                                           const uint16_t *pixels),
+                         const void *context);
+
+struct hx8347_bus;
+/* The caller supplies an initialized RGB565 landscape transport. */
+bool doom_display_hx8347(const uint8_t *frame, const struct hx8347_bus *bus);
 
 /* Consume one logical landscape row before returning. The buffer is reused. */
 void doom_lcd_write_row(unsigned int row, const uint16_t *pixels);

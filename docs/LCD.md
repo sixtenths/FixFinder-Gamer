@@ -28,4 +28,6 @@ Confirm interface straps, reset, command/data, chip select, bus direction, suppl
 
 The candidate HX8347 register layer in `firmware/lcd/hx8347.c` is ready for a verified board transport. It checks two page-zero ID reads for consistency, programs the inclusive window registers `0x02` through `0x09`, and streams RGB565 to GRAM `0x22`. The board transport is responsible for reset, power sequencing, lane mapping, chip select and bus turnaround. The register layer stays separate from the current firmware build while those details are open.
 
-Run `python scripts/Check-LcdProtocol.py` with the same Unicorn and pyelftools dependencies as the DOOM smoke test. The mock bus verifies portrait and landscape bounds, the complete 76,800-pixel fills, rejection of inconsistent and all-low/all-high ID readings, and closure of the pixel stream on a transfer failure.
+The candidate adapter in `firmware/lcd/doom_hx8347.c` sends the game's landscape output through the same GRAM window. It reuses the existing scanline and closes the transfer after the last row or the first failed write. It requires an initialized board transport and stays outside the headless build.
+
+Run `python scripts/Check-LcdProtocol.py` with the same Unicorn and pyelftools dependencies as the DOOM smoke test. The mock bus verifies portrait and landscape bounds, all 76,800 pixels in both a color fill and a scaled indexed game frame, rejection of inconsistent and all-low/all-high ID readings, and closure of the pixel stream on a transfer failure.

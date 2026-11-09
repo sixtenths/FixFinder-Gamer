@@ -13,7 +13,9 @@ void doom_display_set_palette(const uint8_t *rgb)
     }
 }
 
-void doom_display_present(const uint8_t *frame)
+bool doom_display_stream(const uint8_t *frame,
+                         bool (*write_row)(const void *, unsigned int, const uint16_t *),
+                         const void *context)
 {
     unsigned int previous_source_y = DOOM_FRAME_HEIGHT;
     for (unsigned int y = 0; y < DOOM_LCD_HEIGHT; y++) {
@@ -25,6 +27,21 @@ void doom_display_present(const uint8_t *frame)
             }
             previous_source_y = source_y;
         }
-        doom_lcd_write_row(y, scanline);
+        if (!write_row(context, y, scanline)) {
+            return false;
+        }
     }
+    return true;
+}
+
+static bool write_diagnostic_row(const void *context, unsigned int row, const uint16_t *pixels)
+{
+    (void)context;
+    doom_lcd_write_row(row, pixels);
+    return true;
+}
+
+void doom_display_present(const uint8_t *frame)
+{
+    doom_display_stream(frame, write_diagnostic_row, 0);
 }
