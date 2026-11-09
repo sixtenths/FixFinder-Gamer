@@ -1,5 +1,5 @@
 ENTRY(Reset_Handler)
-MEMORY { FLASH(rx) : ORIGIN = 0x08000000, LENGTH = 512K
+MEMORY { FLASH(rx) : ORIGIN = 0x08000000, LENGTH = DEFINED(__fixfinder_flash_size) ? __fixfinder_flash_size : 512K
 RAM(rwx) : ORIGIN = 0x20000000, LENGTH = 128K }
 _sp = ORIGIN(RAM) + LENGTH(RAM);
 SECTIONS {
