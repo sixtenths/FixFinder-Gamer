@@ -72,9 +72,11 @@ char key[8] = {0};
         '-DUSE_USB_HS', '-DUSE_EMBEDDED_PHY', '-DHXTAL_VALUE=8000000U') + $includes
     $app = Join-Path $build 'app.o'
     $runtime = Join-Path $build 'runtime.o'
+    $display = Join-Path $build 'display.o'
     Invoke-Gcc ($platformFlags + @('-DFIXFINDER_DOOM_SWD', '-c', 'USB-Build-V8/app.c', '-o', $app))
     Invoke-Gcc ($platformFlags + @('-std=gnu23', "-I$source/include", '-c',
         'firmware/doom-swd/runtime.c', '-o', $runtime))
+    Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/display.c', '-o', $display))
 
     [IO.File]::WriteAllBytes((Join-Path $build 'doom.wad'), $wadBytes)
     $wadSource = Join-Path $build 'wad.S'
@@ -98,7 +100,7 @@ doom_iwad_len:
         Where-Object Name -ne 'part_1.o' | ForEach-Object FullName)
     $objects += @(Get-ChildItem -LiteralPath $engine -Filter '*.o' |
         Where-Object Name -notin 'engine.o', 'd_main.o', 'w_wad.o', 'z_zone.o' | ForEach-Object FullName)
-    $objects += $app, $runtime, $wadObject
+    $objects += $app, $runtime, $display, $wadObject
     $objects += @('d_main.o', 'w_wad.o', 'z_zone.o') | ForEach-Object { Join-Path $build $_ }
 
     $elf = Join-Path $build 'FixFinder-Doom-SWD.elf'

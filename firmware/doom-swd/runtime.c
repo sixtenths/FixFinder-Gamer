@@ -15,6 +15,10 @@
 #include "i_system_e32.h"
 #include "i_video.h"
 #include "z_zone.h"
+#include "display.h"
+
+_Static_assert(SCREENWIDTH * sizeof(uint16_t) == DOOM_FRAME_WIDTH, "Doom pitch changed");
+_Static_assert(SCREENHEIGHT == DOOM_FRAME_HEIGHT, "Doom height changed");
 
 /* SWD can read these symbols using the linked ELF. */
 volatile unsigned int doom_frames;
@@ -27,6 +31,7 @@ char doom_error[160];
 static uint16_t doom_frame[SCREENWIDTH * SCREENHEIGHT]
     __attribute__((section(".doom_frame")));
 static volatile uint32_t milliseconds;
+static uint32_t frame_hash;
 
 extern char _ebss;
 extern char __heap_end;
@@ -88,21 +93,28 @@ void I_ProcessKeyEvents(void)
         was_pressed = pressed;
     }
 }
-void I_SetPallete_e32(const byte *palette) { (void)palette; }
+void I_SetPallete_e32(const byte *palette) { doom_display_set_palette(palette); }
 void I_CreateBackBuffer_e32(void) { memset(doom_frame, 0, sizeof(doom_frame)); }
 unsigned short *I_GetBackBuffer(void) { return doom_frame; }
 unsigned short *I_GetFrontBuffer(void) { return doom_frame; }
+
+void doom_lcd_write_row(unsigned int row, const uint16_t *pixels)
+{
+    /* The diagnostic consumes the same RGB565 rows as a physical LCD backend. */
+    for (unsigned int x = row % 31U; x < DOOM_LCD_WIDTH; x += 31U) {
+        frame_hash = (frame_hash ^ pixels[x]) * 16777619U;
+    }
+}
 
 void I_FinishUpdate_e32(const byte *frame, const byte *palette,
                         const unsigned int width, const unsigned int height)
 {
     (void)palette;
-    /* Sample the rendered pixels cheaply so a debugger can verify liveness. */
-    uint32_t hash = 2166136261U;
-    for (unsigned int i = 0; i < 2U * width * height; i += 31U) {
-        hash = (hash ^ frame[i]) * 16777619U;
-    }
-    doom_frame_hash = hash;
+    (void)width;
+    (void)height;
+    frame_hash = 2166136261U;
+    doom_display_present(frame);
+    doom_frame_hash = frame_hash;
     if (_g->gamestate == GS_LEVEL && _g->gameepisode == 1 && _g->gamemap == 1 &&
         _g->player.mo != NULL) {
         doom_player_x = _g->player.mo->x;
