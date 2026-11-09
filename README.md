@@ -1,8 +1,8 @@
 # FixFinder DOOM
 
-Play DOOM E1M1 on a modified AutoZone FixFinder 5034VSM using the built-in LCD, buttons, health LEDs, and beeper. On power-up the resident loader shows the AutoZone and DOOM logos and a progress bar, then starts the game.
+Play DOOM E1M1 on a modified AutoZone FixFinder 5034VSM using the built-in LCD, buttons, health LEDs, and beeper. On power-up the resident loader shows HackerZone, the DOOM logo, and a progress bar, then starts the game.
 
-| DOOM running on the FixFinder | Startup splash |
+| DOOM running on the FixFinder | Earlier startup splash |
 | :---: | :---: |
 | ![DOOM gameplay on the FixFinder LCD with the green health LED lit](docs/photos/fixfinder-doom-gameplay.jpg) | ![AutoZone and DOOM logos above the Loading DOOM progress bar](docs/photos/fixfinder-doom-startup.jpg) |
 
@@ -47,6 +47,8 @@ For the experimental 5034VSM with the verified `00 e3 00 00` display response, u
 | Erase + Down | Use doors and switches |
 | Down + Back | Menu |
 | Down + Enter | Automap |
+
+Hold Erase with Back or Enter to walk forward while turning. In the menu, Erase and Down move the selection, and Erase + Down confirms. See the [controls in the setup guide](docs/SETUP.md#if-your-scanner-already-runs-doom).
 
 The LEDs show health. Green is above 50, yellow is 26–50, and red is 25 or lower. The beeper chirps at startup and gives short effects for weapons, pickups, switches, and player damage.
 

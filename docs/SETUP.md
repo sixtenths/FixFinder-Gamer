@@ -4,7 +4,7 @@ This guide is for the experimental AutoZone FixFinder 5034VSM with a GD32F427ZK,
 
 ## If your scanner already runs DOOM
 
-Unplug its USB cable, wait a few seconds, then reconnect it while watching the screen. The AutoZone logo, DOOM logo, and “LOADING DOOM” progress bar appear during the roughly five-second startup window. The game starts automatically. This is the quickest way to replay the splash.
+Unplug its USB cable, wait a few seconds, then reconnect it while watching the screen. The HackerZone wordmark, DOOM logo, and “LOADING DOOM” progress bar appear during the roughly five-second startup window. The game starts automatically. This is the quickest way to replay the splash.
 
 | Button or combination | Action |
 | --- | --- |
@@ -14,6 +14,8 @@ Unplug its USB cable, wait a few seconds, then reconnect it while watching the s
 | Erase + Down | Use doors and switches |
 | Down + Back | Menu |
 | Down + Enter | Automap |
+
+Hold Erase with Back or Enter to walk forward while turning. In the menu, use Erase and Down to move the selection, Back and Enter to adjust settings, and Erase + Down to confirm. Down + Back opens or closes the menu. In the automap, Erase + Down toggles follow mode.
 
 The green, yellow, and red LEDs indicate health. The built-in beeper provides short effects.
 
