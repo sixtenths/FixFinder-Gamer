@@ -19,9 +19,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-DoomSwd.ps1 -E
 python scripts/Smoke-DoomSwd.py <output-elf>
 ```
 
-The smoke test uses Python with `unicorn` and `pyelftools`. It enters the linked game runtime after USB setup, supplies a synthetic clock, and exercises E1M1 with simulated forward input. It also checks all 76,800 RGB565 pixels emitted for a complete 320 x 240 frame. Add `--frame-output <preview.ppm>` to capture that frame.
+The smoke test uses Python with `unicorn` and `pyelftools`. It enters the linked game runtime after USB setup, supplies a synthetic clock, and exercises E1M1 with simulated movement, firing and release. It also checks all 76,800 RGB565 pixels emitted for a complete 320 x 240 frame. Add `--frame-output <preview.ppm>` to capture that frame.
 
 The linked ELF preserves the V8 USB startup path and keeps counters, an RGB565 frame hash, player coordinates and the last engine error readable over SWD. The display path scales the 240 x 160 indexed frame in TCM to a logical landscape frame through a 640-byte row buffer in AHB SRAM. The SWD diagnostic consumes rows in software. The physical LCD backend will consume the same rows once the panel bus and orientation are verified.
+
+The diagnostic takes pressed actions from the `doom_test_buttons` word at the address reported by the current ELF. The [action bits](firmware/doom-swd/input.h) map to the engine's directional controls, Fire, Use, Menu and Automap. The runtime sends key events on press and release so multiple actions can remain held together. Physical button wiring remains to be verified.
 
 ## Raspberry Pi
 

@@ -16,6 +16,7 @@
 #include "i_video.h"
 #include "z_zone.h"
 #include "display.h"
+#include "input.h"
 
 _Static_assert(SCREENWIDTH * sizeof(uint16_t) == DOOM_FRAME_WIDTH, "Doom pitch changed");
 _Static_assert(SCREENHEIGHT == DOOM_FRAME_HEIGHT, "Doom height changed");
@@ -24,9 +25,10 @@ _Static_assert(SCREENHEIGHT == DOOM_FRAME_HEIGHT, "Doom height changed");
 volatile unsigned int doom_frames;
 volatile unsigned int doom_frame_hash;
 volatile unsigned int doom_level_frames;
-volatile unsigned int doom_test_forward;
+volatile uint32_t doom_test_buttons;
 volatile int32_t doom_player_x;
 volatile int32_t doom_player_y;
+volatile int32_t doom_player_bullets;
 char doom_error[160];
 static uint16_t doom_frame[SCREENWIDTH * SCREENHEIGHT]
     __attribute__((section(".doom_frame")));
@@ -85,12 +87,31 @@ void I_Error(const char *format, ...)
 void I_InitScreen_e32(void) {}
 void I_ProcessKeyEvents(void)
 {
-    static bool was_pressed;
-    const bool pressed = doom_test_forward != 0;
-    if (pressed != was_pressed) {
-        event_t event = { .type = pressed ? ev_keydown : ev_keyup, .data1 = KEYD_UP };
-        D_PostEvent(&event);
-        was_pressed = pressed;
+    static const struct {
+        uint32_t button;
+        int key;
+    } bindings[] = {
+        { DOOM_BUTTON_FORWARD, KEYD_UP },
+        { DOOM_BUTTON_BACK, KEYD_DOWN },
+        { DOOM_BUTTON_LEFT, KEYD_LEFT },
+        { DOOM_BUTTON_RIGHT, KEYD_RIGHT },
+        { DOOM_BUTTON_FIRE, KEYD_B },
+        { DOOM_BUTTON_USE, KEYD_A },
+        { DOOM_BUTTON_MENU, KEYD_START },
+        { DOOM_BUTTON_MAP, KEYD_SELECT },
+    };
+    static uint32_t previous;
+    const uint32_t pressed = doom_test_buttons;
+    const uint32_t changed = pressed ^ previous;
+    previous = pressed;
+    for (unsigned int i = 0; i < sizeof(bindings) / sizeof(bindings[0]); i++) {
+        if ((changed & bindings[i].button) != 0U) {
+            event_t event = {
+                .type = (pressed & bindings[i].button) != 0U ? ev_keydown : ev_keyup,
+                .data1 = bindings[i].key
+            };
+            D_PostEvent(&event);
+        }
     }
 }
 void I_SetPallete_e32(const byte *palette) { doom_display_set_palette(palette); }
@@ -119,6 +140,7 @@ void I_FinishUpdate_e32(const byte *frame, const byte *palette,
         _g->player.mo != NULL) {
         doom_player_x = _g->player.mo->x;
         doom_player_y = _g->player.mo->y;
+        doom_player_bullets = _g->player.ammo[am_clip];
         doom_level_frames++;
     }
     doom_frames++;

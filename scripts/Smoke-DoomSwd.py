@@ -8,6 +8,9 @@ from elftools.elf.elffile import ELFFile
 from unicorn import UC_ARCH_ARM, UC_HOOK_BLOCK, UC_HOOK_CODE, UC_MODE_MCLASS, UC_MODE_THUMB, Uc, UcError
 from unicorn.arm_const import UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_SP
 
+FORWARD = 1 << 0
+FIRE = 1 << 4
+
 
 def smoke_test(path, frame_output):
     cpu = Uc(UC_ARCH_ARM, UC_MODE_THUMB | UC_MODE_MCLASS)
@@ -36,6 +39,8 @@ def smoke_test(path, frame_output):
     blocks = ticks = 0
     starting_position = None
     starting_hash = 0
+    starting_ammo = 0
+    ammo_after_release = None
     first_level_frame = 0
     expected_rows = []
     verified_rows = []
@@ -65,6 +70,7 @@ def smoke_test(path, frame_output):
 
     def tick(uc, _address, _size, _data):
         nonlocal blocks, ticks, starting_position, starting_hash, first_level_frame
+        nonlocal starting_ammo, ammo_after_release
         blocks += 1
         if blocks % 512:
             return
@@ -78,8 +84,13 @@ def smoke_test(path, frame_output):
         if frames >= 10 and starting_position is None:
             starting_position = position()
             starting_hash = read_word("doom_frame_hash")
+            starting_ammo = read_word("doom_player_bullets")
             first_level_frame = frames
-            uc.mem_write(symbols["doom_test_forward"], pack("<I", 1))
+            uc.mem_write(symbols["doom_test_buttons"], pack("<I", FORWARD | FIRE))
+        if frames == 16:
+            uc.mem_write(symbols["doom_test_buttons"], pack("<I", FORWARD))
+        if frames == 23:
+            ammo_after_release = read_word("doom_player_bullets")
         if starting_position is not None and frames >= first_level_frame + 20:
             uc.emu_stop()
 
@@ -104,11 +115,16 @@ def smoke_test(path, frame_output):
         raise SystemExit(f"Timed out after {level_frames} E1M1 frames")
     if starting_position == position() or starting_hash == end_hash:
         raise SystemExit("Forward input did not change both player position and frame hash")
+    if ammo_after_release is None or not 0 < ammo_after_release < starting_ammo:
+        raise SystemExit("Fire input did not consume any bullets")
+    if read_word("doom_player_bullets") != ammo_after_release:
+        raise SystemExit("Ammunition kept decreasing after releasing Fire")
     if len(verified_rows) != 240:
         raise SystemExit(f"Expected 240 RGB565 rows, captured {len(verified_rows)}")
 
     print(f"E1M1 rendered {level_frames} frames with {ticks} synthetic ticks")
     print(f"Forward input moved the player from {starting_position} to {position()}")
+    print(f"Fire consumed {starting_ammo - ammo_after_release} bullets and stopped on release")
     print(f"Frame hash changed from {starting_hash:08x} to {end_hash:08x}")
     print("Verified all 76,800 RGB565 pixels presented for the 320x240 landscape frame")
     if frame_output:
