@@ -118,24 +118,66 @@ def reduce_iwad(raw, map_count):
     return output + b"".join(entries)
 
 
-def deduplicate_converted(raw):
+def compact_patch(payload):
+    width, height = struct.unpack_from("<hh", payload)
+    header_size = 8 + width * 4
+    if not (0 < width <= 1024 and 0 < height <= 1024 and header_size < len(payload)):
+        raise ValueError("Invalid patch dimensions")
+    offsets = struct.unpack_from(f"<{width}I", payload, 8)
+    compact = bytearray(payload[:header_size])
+    locations = {}
+    for index, start in enumerate(offsets):
+        if not header_size <= start < len(payload):
+            raise ValueError("Patch column starts outside its data")
+        end = start
+        while end + 1 < len(payload) and payload[end] != 0xff:
+            # A post has three leading bytes and one trailing byte in addition to its pixels.
+            end += payload[end + 1] + 4
+        if end >= len(payload) or payload[end] != 0xff:
+            raise ValueError("Patch column has no terminator")
+        column = payload[start:end + 1]
+        if column not in locations:
+            locations[column] = len(compact)
+            compact += column
+        struct.pack_into("<I", compact, 8 + index * 4, locations[column])
+    return bytes(compact) if len(compact) < len(payload) else payload
+
+
+def deduplicate_converted(raw, compact_patches=False):
     magic, count, directory = HEADER.unpack_from(raw)
     data_start = directory + count * ENTRY.size
     if magic != b"IWAD" or directory != HEADER.size or data_start > len(raw):
         raise ValueError("Expected a WAD produced by GbaWadUtil")
     output = bytearray(raw[:data_start])
     locations = {}
+    patch_section = False
     for i, (offset, size, name) in enumerate(ENTRY.iter_unpack(raw[directory:data_start])):
+        lump_name = name8(name)
+        # The pinned converter keeps menu/HUD patches between PNAMES and S_START,
+        # then sprites and wall patches in their respective namespaces.
+        if lump_name in (b"PNAMES", b"S_START", b"P_START"):
+            patch_section = True
+        elif lump_name in (b"S_END", b"P_END"):
+            patch_section = False
         if size == 0:
             continue
         if offset < data_start or offset + size > len(raw):
             raise ValueError(f"Lump outside WAD data: {name8(name)!r}")
         payload = raw[offset:offset + size]
+        if compact_patches and (
+            (patch_section and lump_name != b"PNAMES")
+            or lump_name in (b"M_ARUN", b"M_GAMMA")
+            or re.fullmatch(rb"STGANUM[0-9]", lump_name)
+        ):
+            try:
+                payload = compact_patch(payload)
+            except (ValueError, struct.error) as error:
+                raise ValueError(f"{lump_name!r}: {error}") from error
         if payload not in locations:
             output += b"\0" * (-len(output) % 4)
             locations[payload] = len(output)
             output += payload
-        ENTRY.pack_into(output, directory + i * ENTRY.size, locations[payload], size, name)
+        ENTRY.pack_into(output, directory + i * ENTRY.size, locations[payload], len(payload), name)
     return output
 
 
@@ -147,13 +189,17 @@ def main():
     mode.add_argument("--maps", type=int, choices=range(1, 10))
     mode.add_argument("--deduplicate-converted", action="store_true",
                       help="Share identical lump bytes after GbaWadUtil conversion")
+    parser.add_argument("--compact-patches", action="store_true",
+                        help="Also share identical pixel columns within converted shareware patches")
     args = parser.parse_args()
     if args.input.resolve() == args.output.resolve():
         parser.error("Choose a separate output path for the reduced IWAD")
+    if args.compact_patches and not args.deduplicate_converted:
+        parser.error("--compact-patches requires --deduplicate-converted")
     try:
         raw = args.input.read_bytes()
         if args.deduplicate_converted:
-            reduced = deduplicate_converted(raw)
+            reduced = deduplicate_converted(raw, args.compact_patches)
             message = f"Deduplicated converted IWAD ({len(raw) - len(reduced):,} bytes saved)"
         else:
             reduced = reduce_iwad(raw, args.maps)

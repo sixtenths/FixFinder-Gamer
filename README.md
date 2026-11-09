@@ -36,12 +36,12 @@ To retain E1M1 through E1M3 from a local DOOM 1.9 shareware IWAD, use the follow
 ```powershell
 python scripts/Prepare-SharewareWad.py <doom1.wad> build/shareware-three.wad --maps 3
 # Convert build/shareware-three.wad to build/shareware-three-gba.wad with GbaWadUtil.
-python scripts/Prepare-SharewareWad.py build/shareware-three-gba.wad build/shareware-three-packed.wad --deduplicate-converted
+python scripts/Prepare-SharewareWad.py build/shareware-three-gba.wad build/shareware-three-packed.wad --deduplicate-converted --compact-patches
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-DoomSwd.ps1 -EngineSource <checkout> -ConvertedWad build/shareware-three-packed.wad -CompactReciprocal
 python scripts/Smoke-DoomSwd.py <output-elf> --check-progression
 ```
 
-The progression check triggers each normal level exit directly and uses simulated Fire presses to advance the intermissions. The three-map image leaves about 13 KiB of internal flash and was tested in emulation. It omits audio, demos and the remaining map data, including the E1M3 secret exit's destination. The nine-map packed WAD alone is larger than the MCU's internal flash.
+The progression check triggers each normal level exit directly and uses simulated Fire presses to advance the intermissions. The optional patch compaction shares identical columns within each converted graphic while preserving its dimensions, column order and pixels. The compact three-map board build with the mock driver leaves about 100 KiB of internal flash and was tested in emulation. It omits audio, demos and the remaining map data, including the E1M3 secret exit's destination. The nine-map packed WAD alone is larger than the MCU's internal flash.
 
 ## Raspberry Pi
 
