@@ -33,6 +33,7 @@ SECTIONS {
     .doom_frame (NOLOAD) : { *(.doom_frame) } > TCM
     .doom_setup (NOLOAD) : { *(.doom_setup) } > TCM
     .doom_video (NOLOAD) : { *(.doom_video) } > TCM
+    .arcade_art (NOLOAD) : { *(.arcade_art) } > TCM
 }
 
 ASSERT((_sidata & 3) == 0, "Startup requires aligned data")

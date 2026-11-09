@@ -135,7 +135,7 @@ Wait for the CRC verification and game launch. The slot holds one installable im
 
 ## Build and use HackerZone Arcade
 
-Add `-Arcade` to the DOOM build command with `-FixFinderLcd -CompactReciprocal -UsbGame`, then install the resulting game BIN over USB. This bundles six games in the same flash slot. The selector opens after the resident loader, and each selection shows its own title screen. Use **Erase** and **Down** to select a game and **Enter** to launch it. Hold **Down + Back** for one second to return to the selector.
+Add `-Arcade` to the DOOM build command with `-FixFinderLcd -CompactReciprocal -UsbGame`, then install the resulting game BIN over USB. This bundles five games in the same flash slot. The selector opens after the resident loader, and each selection shows its own title screen. Use **Erase** and **Down** to select a game and **Enter** to launch it. Hold **Down + Back** for one second to return to the selector.
 
 | Game | Controls |
 | --- | --- |
@@ -144,9 +144,18 @@ Add `-Arcade` to the DOOM build command with `-FixFinderLcd -CompactReciprocal -
 | Maze Chase | Steer with the same four directions. Collect the dots and use the larger pellets to chase the ghosts. |
 | Pong | Use Erase and Down to move your paddle. Play against the scanner. |
 | Breakout | Move the paddle with Back and Enter. Clear the bricks before you lose three balls. |
-| Blockcraft | Walk with Erase and Down, turn with Back and Enter. Aim the crosshair and press Erase + Down to build or Back + Enter to dig. The small world resets when you leave the game. |
 
-Maze Chase is a Pac-Man-style game with an original maze. Blockcraft is a first-person block sandbox inspired by Minecraft Classic.
+The default build includes Maze Chase, a Pac-Man-style game with an original maze. To replace it with **the 1980 Midway arcade Pac-Man**, add `-PacmanRom` to the build with your local MAME ROM archives. A complete set works by itself; a split set needs the parent archive for the color PROMs:
+
+```powershell
+$pacman = @('C:\roms\pacman.zip', 'C:\roms\puckman.zip')
+./scripts/Build-DoomSwd.ps1 -EngineSource build/GBADoom-engine -ConvertedWad $converted `
+    -FixFinderLcd -CompactReciprocal -UsbGame -Arcade -PacmanRom $pacman
+```
+
+The build verifies the program, graphics, and color ROM checksums against [MAME's Midway manifest](https://github.com/mamedev/mame/blob/master/src/mame/pacman/pacman.cpp). ROM files stay local. Pac-Man auto-starts after its self-test; **Erase + Enter** inserts a coin and starts another game. Steer with the same four keys as Maze Chase. The port emulates the original gameplay and video; the original arcade audio is not implemented.
+
+The USB game slot has about 0.55 MiB free with Pac-Man included. The board also has a separate 4 GB eMMC chip, but the game loader has no eMMC driver or game library yet. See the [board and storage notes](STATUS.md#doom-port-and-memory).
 
 ## Troubleshoot installation
 

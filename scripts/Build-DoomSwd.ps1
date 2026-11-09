@@ -11,12 +11,14 @@ param(
     [string]$BoardSource,
     [switch]$FixFinderLcd,
     [switch]$UsbGame,
-    [switch]$Arcade
+    [switch]$Arcade,
+    [string[]]$PacmanRom
 )
 
 $ErrorActionPreference = 'Stop'
 if ($BoardSource -and $FixFinderLcd) { throw 'Select one display backend.' }
 if ($Arcade -and (!$UsbGame -or !$FixFinderLcd)) { throw '-Arcade requires -FixFinderLcd and -UsbGame.' }
+if ($PacmanRom -and !$Arcade) { throw '-PacmanRom requires -Arcade.' }
 $source = (Resolve-Path -LiteralPath $EngineSource).Path
 $wad = (Resolve-Path -LiteralPath $ConvertedWad).Path
 $board = if ($BoardSource) { (Resolve-Path -LiteralPath $BoardSource).Path }
@@ -127,6 +129,28 @@ char key[8] = {0};
     if ($UsbGame) { $platformFlags += '-DFIXFINDER_USB_GAME', '-DFIXFINDER_USB_VIDEO' }
     if ($Arcade) {
         $platformFlags += '-DFIXFINDER_ARCADE'
+        if ($PacmanRom) {
+            $platformFlags += '-DFIXFINDER_PACMAN'
+            $packedRom = Join-Path $build 'pacman.rom'
+            & python -B scripts/Pack-PacmanRom.py $packedRom @PacmanRom
+            if ($LASTEXITCODE -ne 0) { throw 'Could not pack Pac-Man ROMs.' }
+            $romSource = Join-Path $build 'pacman-rom.S'
+            $romObject = Join-Path $build 'pacman-rom.o'
+            $romPath = $packedRom.Replace('\', '/')
+            @"
+.section .rodata.pacman_rom,"a",%progbits
+.global pacman_rom
+pacman_rom:
+.incbin "$romPath"
+"@ | Set-Content -LiteralPath $romSource -Encoding ascii
+            Invoke-Gcc @('-c', $romSource, '-o', $romObject)
+            $boardObjects += $romObject
+            foreach ($unit in @('firmware/doom-swd/pacman.c', 'firmware/doom-swd/pacman/z80.c')) {
+                $object = Join-Path $build ((Split-Path -Leaf $unit) + '.o')
+                Invoke-Gcc ($platformFlags + @('-O3', '-c', $unit, '-o', $object))
+                $boardObjects += $object
+            }
+        }
         $arcadeObject = Join-Path $build 'arcade.o'
         Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/arcade.c', '-o', $arcadeObject))
         $boardObjects += $arcadeObject

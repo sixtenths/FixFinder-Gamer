@@ -2,20 +2,25 @@
 #include "display.h"
 #include "usb_video.h"
 #include "../lcd/fixfinder_io.h"
+#include "../usb-loader/screen_art.h"
+#include "../usb-loader/doom_logo.h"
 #include <string.h>
 
-enum color { BG, WHITE, MUTED, ORANGE, GREEN, RED, BLUE, YELLOW, PINK, PANEL, EARTH };
-enum game_id { DOOM, SNAKE, MAZE, PONG, BREAKOUT, BLOCKCRAFT, GAME_COUNT };
+enum color { BG, WHITE, MUTED, ORANGE, GREEN, RED, BLUE, YELLOW, PINK, PANEL,
+             EDGE, INSET, GLYPH_LOW, GLYPH_HIGH, BRAND = 16, DOOM_ART = 32 };
+enum game_id { DOOM, SNAKE, MAZE, PONG, BREAKOUT, GAME_COUNT };
 enum { W = DOOM_FRAME_WIDTH, H = DOOM_FRAME_HEIGHT };
 
-static const uint8_t palette[768] = {
-    [BG*3] = 13, 17, 25, [WHITE*3] = 248, 243, 232,
+static const uint8_t base_palette[768] = {
+    [BG*3] = 15, 17, 23, [WHITE*3] = 248, 243, 232,
     [MUTED*3] = 148, 160, 177, [ORANGE*3] = 255, 112, 40,
     [GREEN*3] = 78, 222, 109, [RED*3] = 241, 64, 75,
     [BLUE*3] = 69, 137, 241, [YELLOW*3] = 255, 216, 68,
-    [PINK*3] = 235, 115, 184, [PANEL*3] = 35, 44, 60,
-    [EARTH*3] = 153, 93, 50,
+    [PINK*3] = 235, 115, 184, [PANEL*3] = 29, 34, 46,
+    [EDGE*3] = 62, 70, 85, [INSET*3] = 20, 23, 32,
+    [GLYPH_LOW*3] = 103, 104, 109, [GLYPH_HIGH*3] = 175, 173, 170,
 };
+static uint8_t palette[sizeof base_palette] __attribute__((section(".arcade_art")));
 
 static const uint8_t font[][5] = {
     {126,17,17,17,126},{127,73,73,73,54},{62,65,65,65,34},
@@ -34,15 +39,19 @@ static const uint8_t font[][5] = {
 
 static const struct {
     const char *name;
+    const char *genre;
     const char *hint;
     uint8_t color;
 } games[] = {
-    [DOOM] = {"DOOM", "E1M1 HANGAR", RED},
-    [SNAKE] = {"SNAKE", "FOUR KEYS STEER", GREEN},
-    [MAZE] = {"MAZE CHASE", "EAT DOTS  DODGE GHOSTS", YELLOW},
-    [PONG] = {"PONG", "ERASE UP  DOWN DOWN", WHITE},
-    [BREAKOUT] = {"BREAKOUT", "BACK LEFT  ENTER RIGHT", PINK},
-    [BLOCKCRAFT] = {"BLOCKCRAFT", "BUILD A BLOCK WORLD", BLUE},
+    [DOOM] = {"DOOM", "ACTION", "E1M1 HANGAR", RED},
+    [SNAKE] = {"SNAKE", "SURVIVAL", "FOUR KEYS STEER", GREEN},
+#ifdef FIXFINDER_PACMAN
+    [MAZE] = {"PAC MAN", "MIDWAY 1980", "ERASE AND ENTER TO START", YELLOW},
+#else
+    [MAZE] = {"MAZE CHASE", "MAZE", "EAT DOTS  DODGE GHOSTS", YELLOW},
+#endif
+    [PONG] = {"PONG", "SPORT", "ERASE UP  DOWN DOWN", BLUE},
+    [BREAKOUT] = {"BREAKOUT", "PADDLE", "BACK LEFT  ENTER RIGHT", PINK},
 };
 
 static const int dx[] = {1, 0, -1, 0};
@@ -194,6 +203,9 @@ static void snake(uint8_t *frame, const volatile uint32_t *clock)
     } while (finish(frame, clock, won));
 }
 
+#ifdef FIXFINDER_PACMAN
+void fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock);
+#else
 /* A compact original maze. Spaces are traversable and dots are collectible. */
 static const char maze_map[][22] = {
     "#####################",
@@ -282,6 +294,8 @@ static void maze(uint8_t *frame, const volatile uint32_t *clock)
     } while (true);
 }
 
+#endif
+
 static int clamp(int value, int lo, int hi)
 {
     return value < lo ? lo : value > hi ? hi : value;
@@ -348,144 +362,214 @@ static void paddle_game(uint8_t *frame, const volatile uint32_t *clock, bool bri
     } while (true);
 }
 
-static void cube(uint8_t *frame, int x, int y, uint8_t color)
+static void import_colors(unsigned int start, const uint16_t *colors, unsigned int count)
 {
-    for (int line=0; line<8; ++line) {
-        int half = line<4 ? (line+1)*2 : (8-line)*2;
-        box(frame,x-half,y+line,half*2,1,color);
-        box(frame,x-half,y+line+5,half,1,EARTH);
-        box(frame,x,y+line+5,half,1,PANEL);
+    for (unsigned int i=0; i<count; ++i) {
+        unsigned int c=colors[i];
+        palette[(start+i)*3] = (c>>11)*255/31;
+        palette[(start+i)*3+1] = ((c>>5)&63)*255/63;
+        palette[(start+i)*3+2] = (c&31)*255/31;
     }
 }
 
-enum { WORLD = 12, BLOCK = 256, VIEW_TOP = 28, VIEW_HEIGHT = 116 };
-static const int16_t sine[32] = {
-    0,50,98,142,181,213,237,251,256,251,237,213,181,142,98,50,
-    0,-50,-98,-142,-181,-213,-237,-251,-256,-251,-237,-213,-181,-142,-98,-50
-};
-
-struct ray_hit { int cell, x, y, z; };
-
-static struct ray_hit cast(const uint8_t *terrain, int x, int y, int z,
-                           int step_x, int step_y, int step_z)
+static void unpack_art(uint8_t *dst, unsigned int size, const uint8_t *src)
 {
-    for (int i=0; i<64; ++i) {
-        x+=step_x; y+=step_y; z+=step_z;
-        if ((unsigned int)x >= WORLD*BLOCK || (unsigned int)y >= WORLD*BLOCK) break;
-        int cell = (y/BLOCK)*WORLD + x/BLOCK;
-        if (z < terrain[cell]*BLOCK) return (struct ray_hit){cell,x,y,z};
+    unsigned int at=0;
+    while (at<size) {
+        unsigned int token=*src++;
+        if (token&0x80) {
+            unsigned int count=(token&63)+3, distance=*src++;
+            if (token&0x40) distance|=(unsigned int)*src++<<8;
+            while (count--) { dst[at]=dst[at-distance]; ++at; }
+        } else {
+            for (unsigned int count=token+1; count; --count) dst[at++]=*src++;
+        }
     }
-    return (struct ray_hit){-1,x,y,z};
 }
 
-static void blockcraft(uint8_t *frame, const volatile uint32_t *clock)
+static uint8_t wordmark[LOGO_WIDTH*LOGO_HEIGHT/2] __attribute__((section(".arcade_art")));
+static uint8_t doom_art[DOOM_LOGO_WIDTH*DOOM_LOGO_HEIGHT/2] __attribute__((section(".arcade_art")));
+
+static void art(uint8_t *frame, int x, int y, int w, int h,
+                int src_w, int src_h, const uint8_t *packed, uint8_t first,
+                uint8_t transparent, uint8_t paper)
 {
-    uint8_t terrain[WORLD*WORLD];
-    for (int y=0;y<WORLD;++y) for (int x=0;x<WORLD;++x)
-        terrain[y*WORLD+x] = 1 + ((x+y>14 && x>4) || (x==2 && y<5));
-    int x=4*BLOCK+128, y=4*BLOCK+128;
-    unsigned int angle=4;
-    uint32_t previous=0;
-    for (;;) {
-        uint32_t now=*clock, keys=fixfinder_keys(now);
-        if (fixfinder_arcade_exit(keys,now)) return;
-        if (keys==KEY_BACK) angle=(angle+31)&31;
-        if (keys==KEY_ENTER) angle=(angle+1)&31;
-        int fx=sine[(angle+8)&31], fy=sine[angle];
-        int standing=(y/BLOCK)*WORLD+x/BLOCK;
-        if (keys==KEY_ERASE || keys==KEY_DOWN) {
-            int sign=keys==KEY_ERASE?1:-1;
-            int nx=clamp(x+sign*fx/8,32,WORLD*BLOCK-33);
-            int ny=clamp(y+sign*fy/8,32,WORLD*BLOCK-33);
-            int cell=(ny/BLOCK)*WORLD+nx/BLOCK;
-            if (terrain[cell]<=terrain[standing]+1) { x=nx; y=ny; standing=cell; }
+    for (int row=0; row<h; ++row) for (int col=0; col<w; ++col) {
+        int i=(row*src_h/h)*src_w+col*src_w/w;
+        unsigned int index=(packed[i/2]>>((i&1)*4))&15;
+        frame[(y+row)*W+x+col]=(index>=transparent || (first==BRAND && !index))?paper:first+index;
+    }
+}
+
+static void title(uint8_t *frame, int center, int y, const char *name)
+{
+    int width=0;
+    for (const char *s=name; *s; ++s) {
+        unsigned int w=*s==' '?0:large_width[*s-'A'];
+        width+=*s==' '?5:w?w+1:12;
+    }
+    int x=center-width/2;
+    static const uint8_t shades[]={PANEL,GLYPH_LOW,GLYPH_HIGH,WHITE};
+    for (; *name; ++name) {
+        if (*name==' ') { x+=5; continue; }
+        int letter=*name-'A', w=large_width[letter];
+        if (!w) {
+            /* The loader's subset has no Q or Z. Scale the matching small glyph. */
+            for (int row=0; row<(int)LARGE_HEIGHT; ++row)
+                for (int col=0; col<10; ++col)
+                    if (font[letter][col/2] & (1U << (row*7/LARGE_HEIGHT)))
+                        frame[(y+row)*W+x+col]=WHITE;
+            x+=12;
+            continue;
         }
-        int z=terrain[standing]*BLOCK+BLOCK+96;
-        struct ray_hit target=cast(terrain,x,y,z,fx/8,fy/8,-12);
-        if (keys!=previous && target.cell>=0 && target.cell!=standing) {
-            if (keys==(KEY_ERASE|KEY_DOWN) && terrain[target.cell]<7) ++terrain[target.cell];
-            if (keys==(KEY_BACK|KEY_ENTER) && terrain[target.cell]>0) --terrain[target.cell];
+        const uint8_t *pixels=large_glyphs+large_offset[letter];
+        for (int row=0; row<(int)LARGE_HEIGHT; ++row) for (int col=0; col<w; ++col) {
+            int i=row*w+col;
+            unsigned int shade=(pixels[i/4]>>((i&3)*2))&3;
+            if (shade) frame[(y+row)*W+x+col]=shades[shade];
         }
-        previous=keys;
-        hud(frame,BLOCKCRAFT,target.cell<0?0:terrain[target.cell]);
-        text(frame,8,18,"ERASE DOWN BUILD",1,MUTED);
-        text(frame,128,18,"BACK ENTER DIG",1,MUTED);
-        for (int col=0;col<W/2;++col) {
-            int skew=col-W/4;
-            int step_x=fx/8-fy*skew/512;
-            int step_y=fy/8+fx*skew/512;
-            for (int row=0;row<VIEW_HEIGHT/2;++row) {
-                struct ray_hit hit=cast(terrain,x,y,z,step_x,step_y,(row-VIEW_HEIGHT/4)/2-12);
-                uint8_t color=BLUE;
-                if (hit.cell>=0) {
-                    bool top=hit.z+24>=terrain[hit.cell]*BLOCK;
-                    bool edge=(hit.x&255)<14 || (hit.y&255)<14;
-                    color=edge?PANEL:top?GREEN:EARTH;
-                }
-                box(frame,col*2,VIEW_TOP+row*2,2,2,color);
-            }
+        x+=w+1;
+    }
+}
+
+static void centered(uint8_t *frame, int x, int y, const char *s, uint8_t color)
+{
+    text(frame,x-((int)strlen(s)*6-1)/2,y,s,1,color);
+}
+
+static void header(uint8_t *frame)
+{
+    memset(frame,BG,W*H);
+    art(frame,10,8,130,11,LOGO_WIDTH,LOGO_HEIGHT,wordmark,BRAND,16,BG);
+    box(frame,165,6,1,15,EDGE);
+    text(frame,178,10,"ARCADE",1,WHITE);
+    box(frame,10,26,220,1,EDGE);
+    box(frame,10,26,30,1,ORANGE);
+}
+
+static void illustration(uint8_t *frame, int x, int y, enum game_id game)
+{
+    /* 80 by 49 artwork, shared by the selector and the game title cards. */
+    for (int col=1; col<80; col+=6)
+        for (int row=1; row<49; row+=6) box(frame,x+col,y+row,1,1,EDGE);
+    switch (game) {
+    case DOOM:
+        art(frame,x+2,y+1,76,47,DOOM_LOGO_WIDTH,DOOM_LOGO_HEIGHT,doom_art,DOOM_ART,13,INSET);
+        break;
+    case SNAKE:
+        box(frame,x+10,y+30,34,7,GREEN);
+        box(frame,x+36,y+14,8,22,GREEN);
+        box(frame,x+43,y+14,15,8,GREEN);
+        box(frame,x+52,y+15,2,2,BG);
+        box(frame,x+66,y+15,5,5,RED);
+        box(frame,x+67,y+13,2,2,WHITE);
+        break;
+    case MAZE:
+        box(frame,x+5,y+5,70,2,BLUE);
+        box(frame,x+5,y+41,70,2,BLUE);
+        for (int row=0; row<18; ++row) {
+            int edge=row<3?3-row:row>14?row-14:0;
+            int mouth=5-(row<9?9-row:row-9);
+            box(frame,x+11+edge,y+15+row,18-edge*2-(mouth>0?mouth:0),1,YELLOW);
         }
-        box(frame,117,VIEW_TOP+VIEW_HEIGHT/2,7,1,WHITE);
-        box(frame,120,VIEW_TOP+VIEW_HEIGHT/2-3,1,7,WHITE);
-        present(frame);
-        wait_until(clock,now+72);
+        for (int i=0; i<3; ++i) box(frame,x+33+i*7,y+23,2,2,WHITE);
+        box(frame,x+55,y+17,14,15,PINK);
+        box(frame,x+58,y+14,8,4,PINK);
+        box(frame,x+58,y+20,3,4,WHITE);
+        box(frame,x+64,y+20,3,4,WHITE);
+        box(frame,x+58,y+20,1,2,BG);
+        box(frame,x+64,y+20,1,2,BG);
+        break;
+    case PONG:
+        for (int row=3; row<46; row+=6) box(frame,x+39,y+row,2,3,EDGE);
+        box(frame,x+10,y+23,4,17,BLUE);
+        box(frame,x+66,y+9,4,17,ORANGE);
+        box(frame,x+47,y+17,4,4,WHITE);
+        box(frame,x+40,y+22,2,2,MUTED);
+        box(frame,x+34,y+27,1,1,MUTED);
+        break;
+    case BREAKOUT: {
+        static const uint8_t brick[]={RED,PINK,ORANGE};
+        for (int row=0; row<3; ++row) for (int col=0; col<5; ++col)
+            if (row<2 || col!=2) box(frame,x+8+13*col,y+7+7*row,11,5,brick[row]);
+        box(frame,x+43,y+29,3,3,WHITE);
+        box(frame,x+32,y+38,22,4,BLUE);
+        break;
+    }
+    default: break;
     }
 }
 
 static void splash(uint8_t *frame, const volatile uint32_t *clock, enum game_id game)
 {
+    enum { LOAD_MS=900 };
     uint32_t start=*clock;
     do {
         uint32_t now=*clock;
-        memset(frame,BG,W*H);
-        text(frame,59,20,"HACKERZONE",2,ORANGE);
-        box(frame,18,44,204,71,PANEL);
-        box(frame,18,44,204,2,games[game].color);
-        int x=(W-(int)strlen(games[game].name)*12)/2;
-        text(frame,x,56,games[game].name,2,games[game].color);
-        switch (game) {
-        case DOOM:
-            box(frame,107,78,26,4,RED);
-            box(frame,116,74,8,12,RED);
-            break;
-        case SNAKE:
-            for (int i=0;i<4;++i) box(frame,102+i*7,78,6,6,i==3?WHITE:GREEN);
-            box(frame,134,79,4,4,RED);
-            break;
-        case MAZE:
-            box(frame,103,76,9,9,YELLOW);
-            box(frame,110,79,2,3,PANEL);
-            for (int i=0;i<3;++i) box(frame,117+i*7,80,2,2,WHITE);
-            box(frame,138,76,9,9,PINK);
-            break;
-        case PONG:
-            box(frame,100,75,3,12,GREEN);
-            box(frame,119,79,4,4,WHITE);
-            box(frame,137,75,3,12,ORANGE);
-            break;
-        case BREAKOUT:
-            for (int i=0;i<4;++i) box(frame,100+i*10,75,8,4,RED+i);
-            box(frame,124,81,3,3,WHITE);
-            box(frame,111,86,16,2,WHITE);
-            break;
-        case BLOCKCRAFT:
-            cube(frame,112,74,GREEN);
-            cube(frame,128,74,BLUE);
-            break;
+        header(frame);
+        box(frame,20,34,200,100,PANEL);
+        box(frame,20,34,200,2,games[game].color);
+        if (game==DOOM) {
+            art(frame,77,40,86,53,DOOM_LOGO_WIDTH,DOOM_LOGO_HEIGHT,doom_art,DOOM_ART,13,PANEL);
+            centered(frame,120,101,"LOADING DOOM",WHITE);
+        } else {
+            box(frame,80,39,80,49,INSET);
+            illustration(frame,80,39,game);
+            title(frame,120,93,games[game].name);
         }
-        x=(W-(int)strlen(games[game].hint)*6)/2;
-        text(frame,x,93,games[game].hint,1,WHITE);
-        box(frame,30,126,180,6,PANEL);
-        box(frame,30,126,clamp((now-start)*180/650,1,180),6,games[game].color);
+        centered(frame,120,116,games[game].hint,MUTED);
+        box(frame,20,144,200,4,PANEL);
+        box(frame,20,144,clamp((now-start)*200/LOAD_MS,1,200),4,games[game].color);
         present(frame);
         wait_until(clock,now+32);
-    } while (*clock-start<650U);
+    } while (*clock-start<LOAD_MS);
+}
+
+static void selector(uint8_t *frame, unsigned int selected)
+{
+    header(frame);
+    for (unsigned int i=0;i<GAME_COUNT;++i) {
+        int y=34+(int)i*19;
+        bool active=i==selected;
+        box(frame,10,y,106,16,active?PANEL:INSET);
+        box(frame,10,y,2,16,active?games[i].color:EDGE);
+        text(frame,17,y+5,games[i].name,1,active?WHITE:MUTED);
+        if (active) {
+            box(frame,103,y+5,2,6,games[i].color);
+            box(frame,105,y+6,2,4,games[i].color);
+            box(frame,107,y+7,1,2,games[i].color);
+        }
+    }
+    box(frame,123,34,107,92,PANEL);
+    box(frame,123,34,107,2,games[selected].color);
+    box(frame,129,40,95,54,INSET);
+    illustration(frame,137,42,selected);
+    centered(frame,176,99,games[selected].genre,games[selected].color);
+    char page[]="1 OF 5";
+    page[0]+=(char)selected;
+    centered(frame,176,113,page,MUTED);
+
+    box(frame,10,134,220,1,EDGE);
+    box(frame,10,141,34,13,PANEL);
+    text(frame,12,144,"ERASE",1,WHITE);
+    text(frame,49,144,"UP",1,MUTED);
+    box(frame,74,141,28,13,PANEL);
+    text(frame,77,144,"DOWN",1,WHITE);
+    text(frame,108,144,"NEXT",1,MUTED);
+    box(frame,154,141,34,13,ORANGE);
+    text(frame,157,144,"ENTER",1,BG);
+    text(frame,196,144,"PLAY",1,WHITE);
 }
 
 void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
 {
     unsigned int selected=0;
     uint32_t previous=KEY_BACK|KEY_DOWN|KEY_ENTER|KEY_ERASE;
+    memcpy(palette,base_palette,sizeof palette);
+    import_colors(BRAND,logo_palette,sizeof logo_palette/sizeof *logo_palette);
+    import_colors(DOOM_ART,doom_logo_palette,sizeof doom_logo_palette/sizeof *doom_logo_palette);
+    unpack_art(wordmark,sizeof wordmark,logo_data);
+    unpack_art(doom_art,sizeof doom_art,doom_logo_data);
     doom_display_set_palette(palette);
     for (;;) {
         uint32_t now=*clock, keys=fixfinder_keys(now);
@@ -497,25 +581,22 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                 switch (selected) {
                 case DOOM: return;
                 case SNAKE: snake(frame,clock); break;
-                case MAZE: maze(frame,clock); break;
+                case MAZE:
+#ifdef FIXFINDER_PACMAN
+                    fixfinder_pacman_run(frame,clock);
+                    doom_display_set_palette(palette);
+#else
+                    maze(frame,clock);
+#endif
+                    break;
                 case PONG: paddle_game(frame,clock,false); break;
                 case BREAKOUT: paddle_game(frame,clock,true); break;
-                case BLOCKCRAFT: blockcraft(frame,clock); break;
                 }
                 keys=fixfinder_keys(*clock);
             }
             previous=keys;
         }
-        memset(frame,BG,W*H);
-        text(frame,13,8,"HACKERZONE ARCADE",2,ORANGE);
-        box(frame,12,26,216,1,ORANGE);
-        for (unsigned int i=0;i<GAME_COUNT;++i) {
-            int y=34+(int)i*17;
-            if (i==selected) box(frame,12,y-2,216,15,PANEL);
-            box(frame,18,y+2,5,5,games[i].color);
-            text(frame,30,y,games[i].name,1,i==selected?WHITE:MUTED);
-        }
-        text(frame,13,145,"ERASE UP  DOWN DOWN  ENTER PLAY",1,MUTED);
+        selector(frame,selected);
         present(frame);
         wait_until(clock,now+32);
     }
