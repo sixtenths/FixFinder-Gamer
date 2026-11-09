@@ -10,7 +10,7 @@
 #include <string.h>
 
 enum color { BG, WHITE, MUTED, ORANGE, GREEN, RED, BLUE, YELLOW, PINK, PANEL,
-             EDGE, INSET, GLYPH_LOW, GLYPH_HIGH, BRAND = 16, DOOM_ART = 32 };
+             EDGE, INSET, BRAND = 16, DOOM_ART = 32, TEXT_PALETTE = 48 };
 enum game_id { DOOM, SNAKE, MAZE, PONG, BREAKOUT, GAME_COUNT };
 enum { W = DOOM_FRAME_WIDTH, H = DOOM_FRAME_HEIGHT };
 
@@ -21,24 +21,29 @@ static const uint8_t base_palette[768] = {
     [BLUE*3] = 69, 137, 241, [YELLOW*3] = 255, 216, 68,
     [PINK*3] = 235, 115, 184, [PANEL*3] = 29, 34, 46,
     [EDGE*3] = 62, 70, 85, [INSET*3] = 20, 23, 32,
-    [GLYPH_LOW*3] = 103, 104, 109, [GLYPH_HIGH*3] = 175, 173, 170,
 };
 static uint8_t palette[sizeof base_palette] __attribute__((section(".arcade_art")));
 
-static const uint8_t font[][5] = {
-    {126,17,17,17,126},{127,73,73,73,54},{62,65,65,65,34},
-    {127,65,65,34,28},{127,73,73,73,65},{127,9,9,9,1},
-    {62,65,73,73,122},{127,8,8,8,127},{0,65,127,65,0},
-    {32,64,65,63,1},{127,8,20,34,65},{127,64,64,64,64},
-    {127,2,12,2,127},{127,4,8,16,127},{62,65,65,65,62},
-    {127,9,9,9,6},{62,65,81,33,94},{127,9,25,41,70},
-    {38,73,73,73,50},{1,1,127,1,1},{63,64,64,64,63},
-    {31,32,64,32,31},{63,64,56,64,63},{99,20,8,20,99},
-    {7,8,112,8,7},{97,81,73,69,67},
-    {62,81,73,69,62},{0,66,127,64,0},{66,97,81,73,70},
-    {33,65,69,75,49},{24,20,18,127,16},{39,69,69,69,57},
-    {60,74,73,73,48},{1,113,9,5,3},{54,73,73,73,54},{6,73,73,41,30},
+struct ui_glyph {
+    uint16_t offset;
+    int8_t left, top;
+    uint8_t width, height, advance;
 };
+struct ui_font {
+    const struct ui_glyph *glyphs;
+    const uint8_t *pixels;
+};
+#include "arcade_font.h"
+
+struct ui_label {
+    const struct ui_font *font;
+    int x, y;
+    char text[40];
+};
+static struct ui_label labels[8] __attribute__((section(".arcade_art")));
+static unsigned int label_count;
+static bool branding;
+static uint8_t wordmark[LOGO_WIDTH*LOGO_HEIGHT/2] __attribute__((section(".arcade_art")));
 
 static const struct {
     const char *name;
@@ -60,8 +65,6 @@ static const struct {
 static const int dx[] = {1, 0, -1, 0};
 static const int dy[] = {0, 1, 0, -1};
 
-void doom_dcs_present(const uint8_t *frame);
-
 static void box(uint8_t *frame, int x, int y, int width, int height, uint8_t color)
 {
     if (x < 0 || y < 0 || x + width > W || y + height > H) return;
@@ -70,31 +73,114 @@ static void box(uint8_t *frame, int x, int y, int width, int height, uint8_t col
     }
 }
 
-static void text(uint8_t *frame, int x, int y, const char *s, int scale, uint8_t color)
+static const struct ui_glyph *glyph_for(const struct ui_font *font, unsigned char c)
 {
-    for (; *s; ++s, x += 6 * scale) {
-        int index = *s >= 'A' && *s <= 'Z' ? *s - 'A' :
-                    *s >= '0' && *s <= '9' ? 26 + *s - '0' : -1;
-        if (index < 0) continue;
-        for (int col = 0; col < 5; ++col)
-            for (int row = 0; row < 7; ++row)
-                if (font[index][col] & (1U << row))
-                    box(frame, x + col*scale, y + row*scale, scale, scale, color);
-    }
+    return &font->glyphs[(c >= 32 && c < 127 ? c : '?') - 32];
 }
 
-static void number(uint8_t *frame, int x, int y, unsigned int value)
+static int text_width(const struct ui_font *font, const char *s)
+{
+    int width = 0;
+    for (; *s; ++s) width += glyph_for(font, *s)->advance;
+    return width;
+}
+
+static void reset_labels(bool show_brand)
+{
+    label_count = 0;
+    branding = show_brand;
+}
+
+/* Coordinates follow the artwork layout. Glyphs are composed at LCD resolution. */
+static void text(int x, int y, const char *s, const struct ui_font *font,
+                 uint8_t ink, uint8_t paper, bool center)
+{
+    if (label_count >= sizeof labels / sizeof *labels) return;
+    struct ui_label *label = &labels[label_count];
+    unsigned int length = strlen(s);
+    if (length >= sizeof label->text) return;
+    memcpy(label->text, s, length + 1);
+    label->x = x * DOOM_LCD_WIDTH / W;
+    label->y = y * DOOM_LCD_HEIGHT / H;
+    if (center) label->x -= text_width(font, s) / 2;
+    label->font = font;
+    for (unsigned int alpha = 1; alpha <= 15; ++alpha) {
+        unsigned int index = TEXT_PALETTE + label_count * 15 + alpha - 1;
+        for (unsigned int component = 0; component < 3; ++component) {
+            unsigned int fg = base_palette[ink * 3 + component];
+            unsigned int bg = base_palette[paper * 3 + component];
+            palette[index * 3 + component] = (fg * alpha + bg * (15 - alpha) + 7) / 15;
+        }
+    }
+    ++label_count;
+}
+
+static void number(int x, int y, unsigned int value)
 {
     char digits[4] = {
         '0' + value/100%10, '0' + value/10%10, '0' + value%10, 0
     };
-    text(frame, x, y, digits, 1, WHITE);
+    text(x, y, digits, &ui_small, WHITE, BG, false);
+}
+
+static void native_row(const uint8_t *frame, unsigned int y, uint8_t *row)
+{
+    const uint8_t *src = frame + (y * H / DOOM_LCD_HEIGHT) * W;
+    for (unsigned int x = 0; x < DOOM_LCD_WIDTH; ++x)
+        row[x] = src[x * W / DOOM_LCD_WIDTH];
+
+    enum { logo_top = 7, logo_left = (DOOM_LCD_WIDTH - LOGO_WIDTH) / 2 };
+    if (branding && y >= logo_top && y < logo_top + LOGO_HEIGHT) {
+        unsigned int start = (y - logo_top) * LOGO_WIDTH;
+        for (unsigned int x = 0; x < LOGO_WIDTH; ++x) {
+            unsigned int index = (wordmark[(start + x) / 2] >> ((x & 1) * 4)) & 15;
+            if (index) row[logo_left + x] = BRAND + index;
+        }
+    }
+
+    for (unsigned int n = 0; n < label_count; ++n) {
+        const struct ui_label *label = &labels[n];
+        int dy = (int)y - label->y;
+        if (dy < 0 || dy > 34) continue;
+        int x = label->x;
+        for (const char *s = label->text; *s; ++s) {
+            const struct ui_glyph *g = glyph_for(label->font, *s);
+            int gy = dy - g->top;
+            if (gy >= 0 && gy < g->height) {
+                for (unsigned int col = 0; col < g->width; ++col) {
+                    int dest = x + g->left + (int)col;
+                    if (dest < 0 || dest >= DOOM_LCD_WIDTH) continue;
+                    unsigned int pixel = gy * g->width + col;
+                    uint8_t packed = label->font->pixels[g->offset + pixel / 2];
+                    unsigned int alpha = (packed >> ((pixel & 1) * 4)) & 15;
+                    if (alpha) row[dest] = TEXT_PALETTE + n * 15 + alpha - 1;
+                }
+            }
+            x += g->advance;
+        }
+    }
+}
+
+static const uint8_t *preview_row(const void *frame, unsigned int y)
+{
+    static uint8_t preview[W] __attribute__((section(".arcade_art")));
+    uint8_t row[DOOM_LCD_WIDTH];
+    native_row(frame, y * DOOM_LCD_HEIGHT / H, row);
+    for (unsigned int x = 0; x < W; ++x)
+        preview[x] = row[x * DOOM_LCD_WIDTH / W];
+    return preview;
 }
 
 static void present(uint8_t *frame)
 {
-    doom_dcs_present(frame);
-    doom_usb_video_capture(frame, palette);
+    uint8_t row[DOOM_LCD_WIDTH];
+    doom_display_set_palette(palette);
+    doom_dcs_begin_native();
+    for (unsigned int y = 0; y < DOOM_LCD_HEIGHT; ++y) {
+        native_row(frame, y, row);
+        doom_dcs_write_native(y, row);
+    }
+    doom_usb_video_capture_rows(preview_row, frame, palette);
 }
 
 static void wait_until(const volatile uint32_t *clock, uint32_t deadline)
@@ -129,16 +215,17 @@ static int direction(uint32_t keys, int fallback)
 static void hud(uint8_t *frame, enum game_id game, unsigned int score)
 {
     memset(frame, BG, W*H);
-    text(frame, 8, 6, games[game].name, 1, games[game].color);
-    number(frame, 211, 6, score);
-    text(frame, 8, 150, "HOLD DOWN AND BACK FOR MENU", 1, MUTED);
+    reset_labels(false);
+    text(8, 2, games[game].name, &ui_small, games[game].color, BG, false);
+    number(211, 2, score);
+    text(8, 146, "Hold Down + Back for menu", &ui_small, MUTED, BG, false);
 }
 
 static bool finish(uint8_t *frame, const volatile uint32_t *clock, bool won)
 {
     box(frame, 40, 55, 160, 49, PANEL);
-    text(frame, 54, 63, won ? "YOU WIN" : "GAME OVER", 2, WHITE);
-    text(frame, 54, 88, "ENTER TO PLAY AGAIN", 1, MUTED);
+    text(120, 59, won ? "You win" : "Game over", &ui_large, WHITE, PANEL, true);
+    text(120, 86, "Enter to play again", &ui_small, MUTED, PANEL, true);
     bool released = false;
     for (;;) {
         uint32_t now = *clock;
@@ -345,7 +432,7 @@ static void paddle_game(uint8_t *frame, const volatile uint32_t *clock, bool bri
                 }
             }
             hud(frame,bricks?BREAKOUT:PONG,score);
-            number(frame, 183, 6, bricks ? 3-other : other);
+            number(183, 2, bricks ? 3-other : other);
             box(frame, 7, 18, 226, 2, PANEL);
             box(frame, 7, 141, 226, 2, PANEL);
             if (bricks) {
@@ -390,7 +477,6 @@ static void unpack_art(uint8_t *dst, unsigned int size, const uint8_t *src)
     }
 }
 
-static uint8_t wordmark[LOGO_WIDTH*LOGO_HEIGHT/2] __attribute__((section(".arcade_art")));
 static uint8_t doom_art[DOOM_LOGO_WIDTH*DOOM_LOGO_HEIGHT/2] __attribute__((section(".arcade_art")));
 
 static void art(uint8_t *frame, int x, int y, int w, int h,
@@ -400,57 +486,21 @@ static void art(uint8_t *frame, int x, int y, int w, int h,
     for (int row=0; row<h; ++row) for (int col=0; col<w; ++col) {
         int i=(row*src_h/h)*src_w+col*src_w/w;
         unsigned int index=(packed[i/2]>>((i&1)*4))&15;
-        frame[(y+row)*W+x+col]=(index>=transparent || (first==BRAND && !index))?paper:first+index;
+        frame[(y+row)*W+x+col]=index>=transparent?paper:first+index;
     }
 }
 
-static void title(uint8_t *frame, int center, int y, const char *name)
+static void title(int y, const char *name)
 {
-    int width=0;
-    for (const char *s=name; *s; ++s) {
-        unsigned int w=*s>='A'&&*s<='Z'?large_width[*s-'A']:0;
-        width+=*s==' '?5:w?w+1:12;
-    }
-    if (width>W-16) {
-        text(frame,center-((int)strlen(name)*6-1)/2,y+3,name,1,WHITE);
-        return;
-    }
-    int x=center-width/2;
-    static const uint8_t shades[]={PANEL,GLYPH_LOW,GLYPH_HIGH,WHITE};
-    for (; *name; ++name) {
-        if (*name==' ') { x+=5; continue; }
-        int letter=*name>='0'&&*name<='9'?26+*name-'0':*name-'A';
-        int w=letter<26?large_width[letter]:0;
-        if (!w) {
-            /* The loader's subset has no Q or Z. Scale the matching small glyph. */
-            for (int row=0; row<(int)LARGE_HEIGHT; ++row)
-                for (int col=0; col<10; ++col)
-                    if (font[letter][col/2] & (1U << (row*7/LARGE_HEIGHT)))
-                        frame[(y+row)*W+x+col]=WHITE;
-            x+=12;
-            continue;
-        }
-        const uint8_t *pixels=large_glyphs+large_offset[letter];
-        for (int row=0; row<(int)LARGE_HEIGHT; ++row) for (int col=0; col<w; ++col) {
-            int i=row*w+col;
-            unsigned int shade=(pixels[i/4]>>((i&3)*2))&3;
-            if (shade) frame[(y+row)*W+x+col]=shades[shade];
-        }
-        x+=w+1;
-    }
-}
-
-static void centered(uint8_t *frame, int x, int y, const char *s, uint8_t color)
-{
-    text(frame,x-((int)strlen(s)*6-1)/2,y,s,1,color);
+    const struct ui_font *font = text_width(&ui_large, name) <= DOOM_LCD_WIDTH - 24
+        ? &ui_large : &ui_small;
+    text(120, y, name, font, WHITE, PANEL, true);
 }
 
 static void header(uint8_t *frame)
 {
     memset(frame,BG,W*H);
-    art(frame,10,8,130,11,LOGO_WIDTH,LOGO_HEIGHT,wordmark,BRAND,16,BG);
-    box(frame,165,6,1,15,EDGE);
-    text(frame,178,10,"ARCADE",1,WHITE);
+    reset_labels(true);
     box(frame,10,26,220,1,EDGE);
     box(frame,10,26,30,1,ORANGE);
 }
@@ -519,13 +569,13 @@ static void splash(uint8_t *frame, const volatile uint32_t *clock, enum game_id 
         box(frame,20,34,200,2,games[game].color);
         if (game==DOOM) {
             art(frame,77,40,86,53,DOOM_LOGO_WIDTH,DOOM_LOGO_HEIGHT,doom_art,DOOM_ART,13,PANEL);
-            centered(frame,120,101,"LOADING DOOM",WHITE);
+            text(120, 99, "Loading Doom", &ui_small, WHITE, PANEL, true);
         } else {
             box(frame,80,39,80,49,INSET);
             illustration(frame,80,39,game);
-            title(frame,120,93,games[game].name);
+            title(88,games[game].name);
         }
-        centered(frame,120,116,games[game].hint,MUTED);
+        text(120, 114, games[game].hint, &ui_small, MUTED, PANEL, true);
         box(frame,20,144,200,4,PANEL);
         box(frame,20,144,clamp((now-start)*200/LOAD_MS,1,200),4,games[game].color);
         present(frame);
@@ -536,8 +586,7 @@ static void splash(uint8_t *frame, const volatile uint32_t *clock, enum game_id 
 static void selector(uint8_t *frame, unsigned int selected, unsigned int total)
 {
     memset(frame,BG,W*H);
-    art(frame,12,8,116,10,LOGO_WIDTH,LOGO_HEIGHT,wordmark,BRAND,16,BG);
-    text(frame,176,9,"ARCADE",1,WHITE);
+    reset_labels(true);
     uint8_t accent=selected<GAME_COUNT?games[selected].color:GREEN;
     const char *name=selected<GAME_COUNT?games[selected].name:"";
     const char *genre=selected<GAME_COUNT?games[selected].genre:"CHIP 8";
@@ -565,16 +614,16 @@ static void selector(uint8_t *frame, unsigned int selected, unsigned int total)
             box(frame,96,47+pin*6,5,2,GREEN);
             box(frame,139,47+pin*6,5,2,GREEN);
         }
-        centered(frame,120,57,"8 BIT",GREEN);
+        text(120, 53, "8-bit", &ui_small, GREEN, INSET, true);
     }
-    title(frame,120,89,name);
-    centered(frame,120,108,genre,accent);
+    title(86,name);
+    text(120, 105, genre, &ui_small, accent, PANEL, true);
     for (unsigned int i=0;i<total;++i)
         box(frame,120-(total*10-4)/2+i*10,129,6,3,i==selected?accent:EDGE);
-    text(frame,12,146,"ERASE PREV",1,MUTED);
-    text(frame,92,146,"DOWN NEXT",1,MUTED);
+    text(12, 142, "Erase  Prev", &ui_small, MUTED, BG, false);
+    text(86, 142, "Down  Next", &ui_small, MUTED, BG, false);
     box(frame,166,140,62,17,accent);
-    centered(frame,197,145,"ENTER PLAY",BG);
+    text(197, 142, "Enter  Play", &ui_small, BG, accent, true);
 }
 
 void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
@@ -601,12 +650,12 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                 if (selected>=GAME_COUNT) {
                     header(frame);
                     box(frame,20,43,200,76,PANEL);
-                    title(frame,120,65,fixfinder_library_title(selected-GAME_COUNT));
-                    centered(frame,120,93,"LOADING GAME",GREEN);
+                    title(62,fixfinder_library_title(selected-GAME_COUNT));
+                    text(120, 90, "Loading game", &ui_small, GREEN, PANEL, true);
                     present(frame);
                     wait_until(clock,now+550);
                     if (!fixfinder_library_play(selected-GAME_COUNT,frame,clock)) {
-                        centered(frame,120,109,"COULD NOT READ GAME",RED);
+                        text(120, 105, "Could not read game", &ui_small, RED, PANEL, true);
                         present(frame);
                         wait_until(clock,*clock+1000);
                     }

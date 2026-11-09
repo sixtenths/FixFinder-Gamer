@@ -95,7 +95,8 @@ void doom_usb_video_sent(usb_dev *device)
     }
 }
 
-void doom_usb_video_capture(const uint8_t *frame, const uint8_t *palette)
+void doom_usb_video_capture_rows(doom_usb_video_row_fn get_row, const void *context,
+                                 const uint8_t *palette)
 {
     uint32_t irq = __get_PRIMASK();
     __disable_irq();
@@ -120,14 +121,18 @@ void doom_usb_video_capture(const uint8_t *frame, const uint8_t *palette)
         for (unsigned int y = 0; y < VIDEO_HEIGHT; ++y) {
             uint8_t *row = (y < VIDEO_HEIGHT / 2 ? top : bottom) +
                            (y % (VIDEO_HEIGHT / 2)) * VIDEO_WIDTH;
+            const uint8_t *source = get_row(context, y * 2);
             for (unsigned int x = 0; x < VIDEO_WIDTH; ++x) {
-                row[x] = frame[y * 2 * DOOM_FRAME_WIDTH + x * 2];
+                row[x] = source[x * 2];
             }
         }
     } else {
-        const uint8_t *band = frame + (command - VIDEO_FIRST_BAND) * BAND_ROWS * DOOM_FRAME_WIDTH;
-        memcpy(top, band, sizeof top);
-        memcpy(bottom, band + sizeof top, sizeof bottom);
+        const unsigned int first = (command - VIDEO_FIRST_BAND) * BAND_ROWS;
+        for (unsigned int y = 0; y < BAND_ROWS; ++y) {
+            uint8_t *row = (y < BAND_ROWS / 2 ? top : bottom) +
+                           (y % (BAND_ROWS / 2)) * DOOM_FRAME_WIDTH;
+            memcpy(row, get_row(context, first + y), DOOM_FRAME_WIDTH);
+        }
     }
 
     __disable_irq();
@@ -138,4 +143,14 @@ void doom_usb_video_capture(const uint8_t *frame, const uint8_t *palette)
         send_chunk(&custom_hid);
     }
     __set_PRIMASK(irq);
+}
+
+static const uint8_t *frame_row(const void *frame, unsigned int y)
+{
+    return (const uint8_t *)frame + y * DOOM_FRAME_WIDTH;
+}
+
+void doom_usb_video_capture(const uint8_t *frame, const uint8_t *palette)
+{
+    doom_usb_video_capture_rows(frame_row, frame, palette);
 }
