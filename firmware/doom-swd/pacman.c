@@ -26,6 +26,7 @@ static struct {
     uint8_t video[1024], colors[1024], ram[1024], pos[16];
     uint8_t in0, in1, vector, sound[32];
     bool irq, flip, sound_enabled;
+    uint64_t dirty_columns;
 } board __attribute__((section(".arcade_art")));
 static uint8_t rgb[768] __attribute__((section(".arcade_art")));
 
@@ -49,12 +50,25 @@ static void bus_write(void *state, uint16_t addr, uint8_t value)
     (void)state;
     addr &= 0x7fff;
     if (addr<0x4000) return;
-    if (addr<0x4400) board.video[addr-0x4000]=value;
-    else if (addr<0x4800) board.colors[addr-0x4400]=value;
+    if (addr<0x4800) {
+        unsigned int tile=addr&1023;
+        uint8_t *bytes=addr<0x4400?board.video:board.colors;
+        if (bytes[tile]!=value) {
+            bytes[tile]=value;
+            /* Inverse of tile_pen's rotated tilemap. The first and last two
+             * memory rows hold the four columns around the center grid. */
+            unsigned int row=tile>>5;
+            unsigned int column=row<2?34+row:row>=30?row-30:(tile&31)+2;
+            board.dirty_columns|=UINT64_C(1)<<column;
+        }
+    }
     else if (addr>=0x4c00 && addr<0x5000) board.ram[addr-0x4c00]=value;
     else if (addr==0x5000) board.irq=value&1;
     else if (addr==0x5001) board.sound_enabled=value&1;
-    else if (addr==0x5003) board.flip=value&1;
+    else if (addr==0x5003 && board.flip!=(bool)(value&1)) {
+        board.flip=value&1;
+        board.dirty_columns=UINT64_MAX;
+    }
     else if (addr>=0x5040 && addr<0x5060) board.sound[addr-0x5040]=value&15;
     else if (addr>=0x5060 && addr<0x5070) board.pos[addr-0x5060]=value;
 }
@@ -124,7 +138,7 @@ static unsigned int tile_pen(int nx, int ny)
     return pen(board.colors[tile],pixel2(pacman_rom[GFX+offset],tx));
 }
 
-static void render(uint8_t *frame, bool first, uint8_t *previous)
+static void render(uint8_t *frame, bool first, uint8_t *previous, uint8_t *background)
 {
     static const int sprite_col[]={8,16,24,0};
     uint8_t line[W]={0};
@@ -138,18 +152,25 @@ static void render(uint8_t *frame, bool first, uint8_t *previous)
         int nx2=((y+1)*288-1)/H;
         if (board.flip) nx2=287-nx2;
         uint8_t *out=line+(W-VIEW)/2;
-        for (int x=0; x<VIEW; ++x) {
-            int ny=223-x*224/VIEW;
-            int ny2=223-((x+1)*224-1)/VIEW;
-            if (board.flip) ny=223-ny;
-            if (board.flip) ny2=223-ny2;
-            /* Preserve one-pixel lettering and maze details when shrinking the raster. */
-            unsigned int p=tile_pen(nx,ny);
-            if (!p && ny!=ny2) p=tile_pen(nx,ny2);
-            if (!p && nx!=nx2) p=tile_pen(nx2,ny);
-            if (!p && nx!=nx2 && ny!=ny2) p=tile_pen(nx2,ny2);
-            out[x]=p;
+        uint64_t columns=(UINT64_C(1)<<(nx/8))|(UINT64_C(1)<<(nx2/8));
+        if (!background || first || (board.dirty_columns&columns)) {
+            for (int x=0; x<VIEW; ++x) {
+                int ny=223-x*224/VIEW;
+                int ny2=223-((x+1)*224-1)/VIEW;
+                if (board.flip) ny=223-ny;
+                if (board.flip) ny2=223-ny2;
+                /* Preserve one-pixel lettering and maze details when shrinking the raster. */
+                unsigned int p=tile_pen(nx,ny);
+                if (!p && ny!=ny2) p=tile_pen(nx,ny2);
+                if (!p && nx!=nx2) p=tile_pen(nx2,ny);
+                if (!p && nx!=nx2 && ny!=ny2) p=tile_pen(nx2,ny2);
+                out[x]=p;
+            }
+            if (background) memcpy(background,out,VIEW);
+        } else {
+            memcpy(out,background,VIEW);
         }
+        if (background) background+=VIEW;
         for (int s=7; nx>=16 && nx<=271 && s>=0; --s) {
             int offs=s*2;
             unsigned int info=board.ram[0x3f0+offs], attr=board.ram[0x3f1+offs];
@@ -186,6 +207,7 @@ static void render(uint8_t *frame, bool first, uint8_t *previous)
             ++preview_y;
         }
     }
+    board.dirty_columns=0;
     doom_usb_video_native_end();
 }
 
@@ -207,6 +229,7 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
     board.cpu.port_in=port_in;
     board.cpu.port_out=port_out;
     uint8_t *previous=malloc(VIEW*H);
+    uint8_t *background=malloc(VIEW*H);
     uint32_t step=*clock, cycle=0, frames=0, restart=0, attract_frames=0;
     bool was_start=false, ready=false, first_draw=true;
     for (;;) {
@@ -214,6 +237,7 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
         if (fixfinder_arcade_exit(keys,now)) {
             fixfinder_tone(0);
             free(previous);
+            free(background);
             return;
         }
         bool start=(keys==(KEY_ERASE|KEY_ENTER));
@@ -242,7 +266,7 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
         if (board.irq) z80_gen_int(&board.cpu,board.vector);
         if (ready) fixfinder_tone(beeper_pitch());
         if (ready && !(frames&1) && (int32_t)(*clock-step)<17) {
-            render(frame,first_draw,previous);
+            render(frame,first_draw,previous,background);
             first_draw=false;
             doom_usb_video_capture(frame,rgb);
         }
