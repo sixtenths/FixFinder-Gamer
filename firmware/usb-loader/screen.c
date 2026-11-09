@@ -13,7 +13,6 @@
 #define INK 0xffdfU
 #define ORANGE 0xfc00U
 #define RED 0xe947U
-#define WHITE 0xffffU
 #define BAR_Y 215U
 
 static bool available;
@@ -132,7 +131,6 @@ bool loader_screen_init(void)
     }
     start_panel(usb_mdelay, 0xa0);
     fill(0, 0, WIDTH, HEIGHT, BG);
-    fill(0, 0, WIDTH, 66, WHITE);
     draw_logo((66 - LOGO_HEIGHT) / 2, LOGO_WIDTH, LOGO_HEIGHT, logo_data, logo_palette, 1);
     fill(0, 66, WIDTH, 3, ORANGE);
     available = true;

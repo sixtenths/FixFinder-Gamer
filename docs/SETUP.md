@@ -22,15 +22,15 @@ The green, yellow, and red LEDs indicate health. The built-in beeper provides sh
 ## Build the loader and game
 
 1. Clone this repository and open PowerShell at its root. Install Git, Python 3, and Arm GNU Toolchain **15.2.Rel1**. The scripts default to `%LOCALAPPDATA%\FixFinder\ArmGCC\bin`. If you installed the compiler elsewhere, pass its absolute `bin` path as `-ToolchainBin` to each build command. The GigaDevice firmware files and notices are in [GD32F4xx_Firmware_Library](../GD32F4xx_Firmware_Library).
-2. Obtain a local DOOM 1.9 shareware `doom1.wad` and a working Windows build of GbaWadUtil with its runtime DLLs and data directory. The game engine is pinned to GBADoom revision `25deefdb44427e068735d3ef2af1e9a44d5cac85`. The build embeds the converted game data, so keep your WAD and resulting game binary in ignored `build/` or outside the repository.
-3. Run the following from the repository root. Set `$wad` and `$converter` to your actual paths. The converter runs from its own folder so it can find its bundled data.
+2. Obtain a local DOOM 1.9 shareware `doom1.wad`. Use the Windows GbaWadUtil executable and its bundled runtime from the same GBADoom revision as the game engine, `25deefdb44427e068735d3ef2af1e9a44d5cac85`. Converter output from newer releases can omit assets expected by this engine. The build embeds the converted game data, so keep your WAD and resulting game binary in ignored `build/` or outside the repository.
+3. Run the following from the repository root. Set `$wad` to your actual path. The converter runs from its own folder so it can find its bundled data.
 
 ```powershell
 $wad = 'C:\path\to\doom1.wad'
-$converter = 'C:\path\to\GbaWadUtil\GbaWadUtil.exe'
 New-Item -ItemType Directory -Force build | Out-Null
 git clone https://github.com/doomhack/GBADoom.git build/GBADoom-engine
 git -C build/GBADoom-engine checkout 25deefdb44427e068735d3ef2af1e9a44d5cac85
+$converter = (Resolve-Path 'build/GBADoom-engine/GbaWadUtil/GbaWadUtil.exe').Path
 
 $reduced = Join-Path (Get-Location) 'build/doom-e1m1.wad'
 $converted = Join-Path (Get-Location) 'build/doom-e1m1-gba.wad'
@@ -143,3 +143,15 @@ Wait for the CRC verification and game launch. One game fits in the slot at a ti
 | Splash passes before you see it | Watch the screen while reconnecting USB. A manual power cycle gives the full normal boot window. |
 
 For hardware notes and recovery references, see [LCD bring-up](LCD.md), [the status log](STATUS.md), and [V8 recovery](../README.md#raspberry-pi).
+
+## Preview the game on a PC
+
+Leave the Pi debug leads connected and use the ELF for the exact game build installed on the scanner. Run `arm-none-eabi-nm -S FixFinder-Doom-LCD-USB.elf` and find the addresses of `doom_frame` and `palette`. The frame is 38,400 bytes and the palette is 512 bytes.
+
+Copy `scripts/Preview-FixFinder.py` to the Pi. Run the command below with the Pi's LAN address and the two addresses from your ELF. The example addresses are for the build with the forward-and-turn controls fix. Open the private URL printed by the script from your PC on the same network. Stop the preview with Ctrl+C before using the debugger for flashing.
+
+```bash
+python3 Preview-FixFinder.py --bind 192.168.1.59 --frame 0x10000000 --palette 0x200064e4
+```
+
+The browser refreshes every few seconds. It reads the game framebuffer while DOOM runs, so a capture can include parts of successive frames. The loader splash appears before the game framebuffer is available.
