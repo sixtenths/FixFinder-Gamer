@@ -270,6 +270,9 @@ enum race_result fixfinder_race(const volatile uint32_t *clock)
             step+=16+(state.ticks&1U);
         }
         if ((int32_t)(now-render)>=0) {
+            fixfinder_set_led(state.flash ? FIXFINDER_LED_RED :
+                              elapsed >= TIME_LIMIT-7000 || abs(state.lane)>234 ?
+                              FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
             draw(image,&state,elapsed,first);
             first=false;
             render=now+40;

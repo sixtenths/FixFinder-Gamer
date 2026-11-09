@@ -232,6 +232,7 @@ static void hud(uint8_t *frame, enum game_id game, unsigned int score)
 
 static bool finish(uint8_t *frame, const volatile uint32_t *clock, bool won)
 {
+    fixfinder_set_led(won ? FIXFINDER_LED_GREEN : FIXFINDER_LED_RED);
     box(frame, 40, 55, 160, 49, PANEL);
     text(120, 59, won ? "You win" : "Game over", &ui_large, WHITE, PANEL, true);
     text(120, 86, "Enter to play again", &ui_small, MUTED, PANEL, true);
@@ -262,7 +263,7 @@ static void snake(uint8_t *frame, const volatile uint32_t *clock)
         uint16_t body[CELLS] = {7*C+7, 7*C+6, 7*C+5};
         unsigned int length = 3, food = 7*C+16;
         int heading = 0, next = 0;
-        uint32_t step = *clock + 190;
+        uint32_t step = *clock + 190, food_flash = *clock;
         won = false;
         for (;;) {
             uint32_t now = *clock, keys = fixfinder_keys(now);
@@ -283,6 +284,7 @@ static void snake(uint8_t *frame, const volatile uint32_t *clock)
                 body[0] = cell;
                 if (grow && ++length == CELLS) { won = true; break; }
                 if (grow) {
+                    food_flash = now + 220;
                     do {
                         food = random_cell(&seed, CELLS);
                         hit = false;
@@ -291,6 +293,7 @@ static void snake(uint8_t *frame, const volatile uint32_t *clock)
                 }
                 step = now + (length < 22 ? 190 - length*5 : 80);
             }
+            fixfinder_set_led((int32_t)(food_flash - now) > 0 ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
             hud(frame, SNAKE, length - 3);
             box(frame, 7, 19, 226, 122, PANEL);
             box(frame, 9+(food%C)*TILE, 21+(food/C)*TILE, 5, 5, RED);
@@ -375,6 +378,8 @@ static void maze(uint8_t *frame, const volatile uint32_t *clock)
                     --lives; x=10; y=11; safe_until=now+1400;
                 }
             }
+            fixfinder_set_led(lives <= 1 ? FIXFINDER_LED_RED :
+                              lives == 2 || powered ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
             hud(frame, MAZE, score);
             for (int row=0; row<15; ++row) for (int col=0; col<21; ++col) {
                 int px=36+col*8, py=19+row*8;
@@ -440,6 +445,8 @@ static void paddle_game(uint8_t *frame, const volatile uint32_t *clock, bool bri
                     x=120; y=80;
                 }
             }
+            fixfinder_set_led(bricks && other >= 2 ? FIXFINDER_LED_RED :
+                              other > (bricks ? 0 : score) ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
             hud(frame,bricks?BREAKOUT:PONG,score);
             number(183, 2, bricks ? 3-other : other);
             box(frame, 7, 18, 226, 2, PANEL);
@@ -681,6 +688,7 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                 redraw = true;
             }
             if (keys==KEY_ENTER && previous==0) {
+                fixfinder_set_led(FIXFINDER_LED_YELLOW);
 #ifdef FIXFINDER_EMMC_LIBRARY
                 if (selected>=GAME_COUNT) {
                     header(frame);
@@ -690,6 +698,7 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                     present(frame);
                     wait_until(clock,now+550);
                     if (!fixfinder_library_play(selected-GAME_COUNT,frame,clock)) {
+                        fixfinder_set_led(FIXFINDER_LED_RED);
                         text(120, 105, "Could not read game", &ui_small, RED, PANEL, true);
                         present(frame);
                         wait_until(clock,*clock+1000);
@@ -705,6 +714,7 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                 case MAZE:
 #ifdef FIXFINDER_PACMAN
                     if (!fixfinder_pacman_run(frame,clock)) {
+                        fixfinder_set_led(FIXFINDER_LED_RED);
                         doom_display_set_palette(palette);
                         text(120, 125, "Could not load Pac-Man ROM", &ui_small, RED, PANEL, true);
                         present(frame);
@@ -734,6 +744,7 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
             previous=keys;
         }
         if (redraw) {
+            fixfinder_set_led(FIXFINDER_LED_OFF);
             selector(frame,selected,total);
             present(frame);
             redraw = false;

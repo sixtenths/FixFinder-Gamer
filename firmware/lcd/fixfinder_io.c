@@ -21,6 +21,7 @@
 #define BEEPER_PIN (1U << 13) /* PF13, active high */
 
 static volatile uint32_t beep_remaining;
+static enum fixfinder_led active_led;
 static uint32_t tone_hz, tone_timer_hz;
 static bool tone_high;
 
@@ -45,6 +46,7 @@ void fixfinder_io_init(void)
     configure_output(GPIOG, 13, 1);
     configure_output(GPIOF, 14, 1);
     configure_output(GPIOF, 13, 0);
+    active_led = FIXFINDER_LED_OFF;
 }
 
 void fixfinder_beep(uint32_t duration_ms)
@@ -119,18 +121,19 @@ void fixfinder_tone(uint32_t hz)
     tone_hz = hz;
 }
 
+void fixfinder_set_led(enum fixfinder_led led)
+{
+    if (led == active_led) return;
+    GPIO_BOP(GPIOG) = (led == FIXFINDER_LED_GREEN ? GREEN_PIN << 16 : GREEN_PIN) |
+                      (led == FIXFINDER_LED_YELLOW ? YELLOW_PIN << 16 : YELLOW_PIN);
+    GPIO_BOP(GPIOF) = led == FIXFINDER_LED_RED ? RED_PIN << 16 : RED_PIN;
+    active_led = led;
+}
+
 void fixfinder_health_led(int health)
 {
-    if (health > 50) {
-        GPIO_BOP(GPIOG) = (GREEN_PIN << 16) | YELLOW_PIN;
-        GPIO_BOP(GPIOF) = RED_PIN;
-    } else if (health > 25) {
-        GPIO_BOP(GPIOG) = GREEN_PIN | (YELLOW_PIN << 16);
-        GPIO_BOP(GPIOF) = RED_PIN;
-    } else {
-        GPIO_BOP(GPIOG) = GREEN_PIN | YELLOW_PIN;
-        GPIO_BOP(GPIOF) = RED_PIN << 16;
-    }
+    fixfinder_set_led(health > 50 ? FIXFINDER_LED_GREEN :
+                      health > 25 ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_RED);
 }
 
 uint32_t fixfinder_physical_keys(uint32_t now)

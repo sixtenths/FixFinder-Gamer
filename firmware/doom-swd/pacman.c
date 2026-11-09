@@ -19,7 +19,8 @@ extern const uint8_t pacman_rom[];
 
 enum {
     W=DOOM_LCD_WIDTH, H=DOOM_LCD_HEIGHT, VIEW=186,
-    GFX=0x4000, COLOR=0x6000, LOOKUP=0x6020, PAUSE_BG=32, PAUSE_INK=33
+    GFX=0x4000, COLOR=0x6000, LOOKUP=0x6020, PAUSE_BG=32, PAUSE_INK=33,
+    GAME_MODE=0x200, LIVES=0x214
 };
 static struct {
     z80 cpu;
@@ -222,6 +223,7 @@ static void render(uint8_t *frame, bool first, uint8_t *previous, uint8_t *backg
 
 static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
 {
+    fixfinder_set_led(FIXFINDER_LED_YELLOW);
     memset(&board,0,sizeof board);
     memset(rgb,0,sizeof rgb);
     memset(frame,0,DOOM_FRAME_WIDTH*DOOM_FRAME_HEIGHT);
@@ -242,7 +244,9 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
     uint8_t *previous=malloc(VIEW*H);
     uint8_t *background=malloc(VIEW*H);
     uint32_t step=*clock, cycle=0, frames=0, restart=0, attract_frames=0;
-    bool was_start=false, ready=false, first_draw=true, was_pause=false, paused=false;
+    uint32_t damage_until=0;
+    unsigned int previous_lives=0;
+    bool was_start=false, ready=false, first_draw=true, was_pause=false, paused=false, played=false;
     for (;;) {
         uint32_t now=*clock, keys=fixfinder_keys(now);
         if (fixfinder_arcade_exit(keys,now)) {
@@ -257,6 +261,7 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
         if (toggle) {
             paused=!paused;
             fixfinder_tone(0);
+            if (paused) fixfinder_set_led(FIXFINDER_LED_YELLOW);
             render(frame,true,previous,background,paused);
             first_draw=false;
             step=*clock;
@@ -281,7 +286,7 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
          */
         /* $4E00/$4E01 are the Midway ROM's game/intro modes. During the
          * self-test, RAM gets overwritten with transient test patterns. */
-        attract_frames=board.ram[0x200]==1 && !board.ram[0x201]?attract_frames+1:0;
+        attract_frames=board.ram[GAME_MODE]==1 && !board.ram[0x201]?attract_frames+1:0;
         if (!ready && (attract_frames>=20 || frames==700)) {
             ready=true;
             restart=frames+1;
@@ -292,7 +297,22 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
         cycle+=50688;
         while ((int32_t)(board.cpu.cyc-cycle)<0) z80_step(&board.cpu);
         if (board.irq) z80_gen_int(&board.cpu,board.vector);
-        if (ready) fixfinder_tone(beeper_pitch());
+        if (ready) {
+            fixfinder_tone(beeper_pitch());
+            uint8_t mode=board.ram[GAME_MODE];
+            if (mode==3) {
+                played=true;
+                unsigned int lives=board.ram[LIVES];
+                if (lives<previous_lives) damage_until=frames+36;
+                previous_lives=lives;
+                fixfinder_set_led(lives<=1 || (int32_t)(damage_until-frames)>0 ? FIXFINDER_LED_RED :
+                                  lives==2 ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
+            } else {
+                previous_lives=0;
+                damage_until=frames;
+                fixfinder_set_led(played && mode==1 ? FIXFINDER_LED_RED : FIXFINDER_LED_YELLOW);
+            }
+        }
         if (ready && !(frames&1) && (int32_t)(*clock-step)<17) {
             render(frame,first_draw,previous,background,false);
             first_draw=false;

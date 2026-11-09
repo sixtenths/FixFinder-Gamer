@@ -158,6 +158,19 @@ The build verifies the program, graphics, and color ROM checksums against [MAME'
 
 The USB game slot and the eMMC are separate. With `-Arcade -EmmcLibrary`, the game checks the board's FAT32 eMMC for `FFARCADE.PAK` and adds the pack's games to the selector. This reads the existing filesystem and uses no eMMC writes during gameplay. A missing or unreadable pack leaves the built-in games available.
 
+The LEDs are off in the selector and yellow while a game loads. During play they show the following states.
+
+| Game | Green | Yellow | Red |
+| --- | --- | --- | --- |
+| DOOM | Over 50 health | 26–50 health | 25 health or less |
+| Pac-Man | Three or more lives | Two lives, starting, or paused | Last life, just lost a life, or game over |
+| Snake | Playing or won | Just ate food | Game over |
+| Maze Chase | Three lives | Two lives or powered up | Last life or game over |
+| Pong | Tied, ahead, or won | Opponent is ahead | Lost the match |
+| Breakout | Three balls or won | Two balls | Last ball or game over |
+| Neon Circuit | Racing or finished | Off road or under seven seconds left | Collision or time expired |
+| eMMC bonus games | Running | Game sound or waiting for a key | Program stopped |
+
 Add `-PacmanFromEmmc` to load Pac-Man from `PACMAN.ROM` on that same volume. For the first install on scanner 1, combine it with `-PacmanRom $pacman` so the firmware can create and verify the file. Subsequent builds can omit `-PacmanRom` and load the existing file into RAM when Pac-Man starts.
 
 The starter pack uses five games from the [CC0 CHIP-8 Archive](https://github.com/JohnEarnest/chip8Archive/tree/761e3ffc63f43e6a849e80714122feff2afca208), played through [C-Octo](https://github.com/JohnEarnest/c-octo/tree/102994e6166236045a067efa930a88532510e03e). Existing six-game packs still load. The selector skips the old Dino Run entry and shows Neon Circuit in its place.

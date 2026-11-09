@@ -166,6 +166,7 @@ bool fixfinder_library_play(unsigned int index,uint8_t *frame,const volatile uin
     octo_emulator_init(vm,(char *)rom,e->length,&opts,NULL);
     static const uint8_t rgb[768]={8,13,22, 146,241,163, 237,101,99, 255,219,115};
     doom_display_set_palette(rgb);
+    uint32_t sound_flash=*clock;
     uint32_t previous=15, deadline=*clock;
     unsigned int ticks=0;
     while (!vm->halt) {
@@ -196,7 +197,12 @@ bool fixfinder_library_play(unsigned int index,uint8_t *frame,const volatile uin
             if (drawing && opts.q_vblank) break;
         }
         if (vm->dt) --vm->dt;
-        if (vm->st && (--vm->st&3u)==0) fixfinder_beep(20);
+        if (vm->st) {
+            sound_flash=now+160;
+            if ((--vm->st&3u)==0) fixfinder_beep(20);
+        }
+        fixfinder_set_led(vm->wait || (int32_t)(sound_flash-now)>0 ?
+                          FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
         if (!(ticks&1u)) {
             memset(frame,0,W*H);
             unsigned int w=vm->hires?128:64, h=vm->hires?64:32;
@@ -209,6 +215,11 @@ bool fixfinder_library_play(unsigned int index,uint8_t *frame,const volatile uin
         deadline+=ticks++%3==0?16:17;
         if ((int32_t)(*clock-deadline)>50) deadline=*clock;
         while ((int32_t)(*clock-deadline)<0) {}
+    }
+    if (vm->halt) {
+        fixfinder_set_led(FIXFINDER_LED_RED);
+        uint32_t stopped=*clock;
+        while (*clock-stopped<300) doom_usb_video_capture(frame,rgb);
     }
     free(vm);
     return true;
