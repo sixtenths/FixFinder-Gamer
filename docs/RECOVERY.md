@@ -1,8 +1,10 @@
 # Recovery and bench tools
 
-## Install the resident loader once over SWD
+If this is your only diagnostic scanner and you still need it for cars, keep the factory firmware. The first loader write replaces the factory boot path. Game installs can overwrite additional factory code. This project does not include a factory firmware image or a verified full return to stock. [Decide whether to convert](SETUP.md#start-with-one-scanner)
 
-If this is still a factory scanner, obtain and verify a restorable backup before writing anything. If SWD reads are blocked by read protection or the backup cannot be verified, stop. Changing protection can erase the factory firmware. This project’s V8 image is a recovery baseline for the experimental build, and restoring V8 will not bring back the original automotive firmware. Keep an intact factory scanner for diagnostics.
+## Check the scanner over SWD
+
+Use the scanner you intend to convert. The wiring and `read` commands in this section do not program flash. If the case or board differs from the supported revision, stop and compare the [board markings](SETUP.md) before connecting leads.
 
 Power both devices off to connect the three leads. Find **J5**, the row of six holes along the board edge beside the Kingston chip. Start at **hole 1**, the square pad, and count toward the opposite end. Power the scanner separately through its USB data cable.
 
@@ -22,7 +24,7 @@ In the wired photo, J5 runs left to right along the bottom edge. The yellow lead
 | Hole 3 | 22 (GPIO25) | SWCLK |
 | Hole 6 | 20 | Ground |
 
-Leave J5 holes 1, 4, and 5 unconnected. Use probe-rs 0.32.0 on the Pi. If its GPIO chip differs from `gpiochip0`, identify the chip with `gpiodetect` and adjust the selector. The commands below read the core ID, the board UID, and the flash vectors. Run them on the Pi after connecting the experimental scanner.
+Leave J5 holes 1, 4, and 5 unconnected. Use [probe-rs 0.32.0](https://github.com/probe-rs/probe-rs/releases/tag/v0.32.0) on the Pi. Adjust the path in `ffprobe` if you installed it outside `$HOME/.cargo/bin`. If the Pi’s GPIO chip differs from `gpiochip0`, identify the chip with `gpiodetect` and adjust the selector. Power the Pi and scanner separately, then run these commands on the Pi to read the core ID, the board UID, and the flash vectors.
 
 ```bash
 ffprobe() {
@@ -34,7 +36,11 @@ ffprobe read b32 0x1FFF7A10 3 --format simple-hex
 ffprobe read b32 0x08000000 2 --format simple-hex
 ```
 
-The expected Cortex-M4 CPUID is `410fc241`. Record the three UID words for this physical scanner. To check a main-flash backup before programming, read all 3 MiB twice and compare the binary copies. This can take several minutes at 50 kHz. Keep the resulting backup and its checksum somewhere private. Main flash covers the region used by this project and is only one part of a factory recovery plan.
+The expected Cortex-M4 CPUID is `410fc241`. Record the three UID words for this scanner. Seeing a core ID or a UID does not establish that factory flash can be read. If the vectors are unreadable, all zeroes, or erased, or the connection drops between reads, stop before any write. A [factory unit tested by the project](LCD.md#first-continuity-measurements) reported low protection. Clearing that protection causes a main-flash mass erase. [GigaDevice GD32F4xx user manual](https://www.gd32mcu.com/data/documents/userManual/GD32F4xx_User_Manual_Rev3.4.pdf)
+
+### Back up main flash before any write
+
+Read all 3 MiB twice and compare the binary copies. A full read can take several minutes at 50 kHz. The block below prints the backup path and checksum only after both copies match.
 
 ```bash
 umask 077
@@ -53,6 +59,14 @@ backup_dir=$(mktemp -d "$HOME/fixfinder-flash.XXXXXXXX")
 )
 ```
 
+If either read fails or the copies disagree, stop. Save the UID, `first.bin`, and `SHA256SUMS` in a private location off the Pi. Verify the copy with `sha256sum -c SHA256SUMS` from the backup directory. Keep it associated with this exact scanner.
+
+The dump covers the MCU’s main flash. It does not capture the MCU option bytes or the separate eMMC and radio storage, and matching dumps do not prove that a factory restore will boot or scan a car. If you need a guaranteed way back to stock, stop here. The [V8 recovery image](#verify-or-restore-the-v8-recovery-baseline) is project firmware and does not restore vehicle diagnostics.
+
+## Install the resident loader once over SWD
+
+Continue only with the unit’s verified backup saved, a stable SWD connection, and a scanner you are willing to dedicate to games. If a tool asks to unlock read protection or erase the whole chip, cancel.
+
 Build the resident loader using the [installation guide](SETUP.md#build-the-resident-loader). Copy `$loaderBin` to your Pi using SCP or another file transfer and compare its SHA-256 with the Windows result. From the folder containing the copied file, recheck the UID and program the loader. Replace the three placeholders with the words you recorded.
 
 ```bash
@@ -68,7 +82,7 @@ else
 fi
 ```
 
-Use a sector download as shown. If the loader has no valid game yet, the display should settle on **USB LOADER READY**.
+Use a sector download as shown. If the loader has no valid game yet, the display should settle on **USB LOADER READY**. Return to the [USB game install](SETUP.md#install-or-replace-the-game-over-usb) to load the one-map arcade. The Pi is only needed again for loader changes or SWD recovery.
 
 ## Verify or restore the V8 recovery baseline
 
@@ -76,7 +90,7 @@ Use a sector download as shown. If the loader has no valid game yet, the display
 ./scripts/Build-V8.ps1
 ```
 
-The build must match the [archived V8 SHA-256](../USB-Build-V8/SHA256SUMS). V8 is the project's experimental USB baseline. To use the guarded Pi helper, review its SSH user and probe-rs path in [Deploy-V8.ps1](../scripts/Deploy-V8.ps1), then use `-Inspect` and, only for the experimental board, `-Restore -ExpectedUid 'WORD1 WORD2 WORD3'`. It verifies the archived image, core ID and board UID. A factory restoration requires your own verified factory backup.
+The build must match the [archived V8 SHA-256](../USB-Build-V8/SHA256SUMS). V8 is the project's experimental USB baseline. To use the guarded Pi helper, review its SSH user and probe-rs path in [Deploy-V8.ps1](../scripts/Deploy-V8.ps1), then use `-Inspect` and, only for the experimental board, `-Restore -ExpectedUid 'WORD1 WORD2 WORD3'`. It verifies the archived image, core ID and board UID. This procedure restores V8 only; it cannot restore your scanner’s factory firmware.
 
 ## Preview through the Pi
 
@@ -85,7 +99,7 @@ Leave the Pi debug leads connected and use the ELF for the exact game build inst
 Copy `scripts/Preview-FixFinder.py` to the Pi. Run the command below with the Pi's LAN address and the two addresses from your ELF. Substitute your Pi address and the addresses from the matching ELF. Open the private URL printed by the script from your PC on the same network. Stop the preview with Ctrl+C before using the debugger for flashing.
 
 ```bash
-python3 Preview-FixFinder.py --bind <PI_LAN_IP> --frame <FRAME_ADDRESS> --palette <PALETTE_ADDRESS>
+python3 Preview-FixFinder.py --bind 'PI_LAN_IP' --frame 'FRAME_ADDRESS' --palette 'PALETTE_ADDRESS'
 ```
 
 The browser refreshes every few seconds. It reads the game framebuffer while DOOM runs, so a capture can include parts of successive frames. The loader splash appears before the game framebuffer is available.

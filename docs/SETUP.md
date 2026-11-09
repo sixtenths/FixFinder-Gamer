@@ -2,26 +2,58 @@
 
 This guide targets the USB-C AutoZone FixFinder **5034VSM** with a **GD32F427ZK** and PCB marking **`PCB_2L_5034_REVC_TYPEC_20200319`**. [Board photos and LCD notes](LCD.md)
 
-If your scanner already runs HackerZone Arcade, start at [Play and stream](PLAY.md). If it has factory firmware, first verify a restorable backup and install the resident loader over SWD. Keep an intact scanner for automotive use. [First-time SWD and recovery](RECOVERY.md#install-the-resident-loader-once-over-swd)
+## Start with one scanner
+
+You don’t need a second scanner. The second unit in the [hardware notes](LCD.md) was used to learn how the factory display works. The wiring, loader, and game builds below target the scanner you already have.
+
+| If this describes your scanner | What to do |
+| --- | --- |
+| You still use it for vehicle diagnostics, or need to be able to return it to stock. | Keep it stock. The arcade replaces the factory boot path, has no dual boot, and this project has no verified procedure for restoring all factory functionality. You can still read the guide, browse the captures, and build on your PC. |
+| It’s a factory unit you’re willing to dedicate to games. | Match the board markings and run the [read-only checks](RECOVERY.md#check-the-scanner-over-swd). Save and verify the unit’s own factory flash before writing anything. Stop if reads are blocked, the dump fails verification, or the debug connection is unstable. Even a verified main-flash dump doesn’t guarantee a return to stock. |
+| It already runs the HackerZone USB loader. | Skip SWD for ordinary game installs. Use [the USB installer](#install-or-replace-the-game-over-usb) or go straight to [the controls and viewer](PLAY.md). |
+
+### What you gain and what you give up
+
+You get a playable E1M1 and six built-in arcade games on the original LCD and buttons, with LED and beeper feedback. The Windows viewer streams at the panel’s 320 × 240 resolution and lets you play with a keyboard. After the first SWD install, you can build and swap compatible game images over USB without reopening the case. This is also a way to learn embedded development on hardware you already own.
+
+You give up the scanner’s normal automotive functions while the arcade is installed. A failed flash may leave the scanner unable to boot and require another SWD session. If factory recovery matters, the practical cost could be a replacement diagnostic tool. The arcade also works within the scanner’s four-button layout and beeper. Later DOOM maps and the CHIP-8 pack require eMMC files; the included writer is locked to the development unit.
+
+### What you need and what it costs
+
+| Item | Cost and purpose |
+| --- | --- |
+| One compatible scanner | **$0 if you already own it.** If it’s your only scan tool, price out how you’d replace that function before converting it. |
+| Windows PC and USB-C data cable | Reuse what you have. The PC builds games and runs the USB installer and viewer. The cable also powers the scanner on the bench. |
+| Raspberry Pi with a populated GPIO header, power supply, and boot media | Borrow or reuse one for the first install and any SWD recovery. As a price reference, the project bench used a Pi 400; [Raspberry Pi lists it at US$60 for the unit](https://www.raspberrypi.com/news/more-memory-driven-price-rises/), before accessories, tax, and shipping. |
+| Three jumper leads and a screwdriver that fits your case | Reuse or buy them if needed. The [J5 photos](RECOVERY.md#find-the-j5-holes) show the no-solder setup. The jumpers must stay secure without being held during a write. |
+| Game data and tools | The build tools and DOOM 1.9 shareware are free; supply the matching `doom1.wad` locally. Original Pac-Man is optional and requires your own arcade ROM files. |
+| Bench time | Set aside at least an hour for a first attempt: open the case, set up the tools, make two flash reads, and test USB. Setup or debug problems can take longer. If SWD is unreliable, stop before flashing. |
+
+With the tools and cables on hand or borrowed, the conversion can cost **$0 out of pocket**. You can check the board and prepare the software before buying debug hardware.
 
 ## Choose a build
 
 | Build | DOOM maps | Storage setup |
 | --- | --- | --- |
-| One-map arcade | Hangar, E1M1 | Runs without an eMMC map pack. This is the portable starting point for another compatible scanner. |
-| Complete shareware arcade | E1M1–E1M8 plus E1M9 | Needs the matching `0:/FFDOOM1.PAK` on a verified FAT32 eMMC volume. The included seed installer can provision the project’s test scanner. |
+| **One-map arcade (start here)** | Hangar, E1M1 | Runs without eMMC provisioning. |
+| Complete shareware arcade | E1M1–E1M8 plus E1M9 | Needs the matching `0:/FFDOOM1.PAK` on a verified FAT32 eMMC volume. The included seed installer only provisions the project’s development scanner. |
 
 Both builds use the same USB loader and support the native arcade games. On the one-map build, stop at the Hangar results screen or hold **Down + Back** to leave. Continuing to E1M2 requires the complete episode build.
 
 ## Prepare the toolchain and WAD
 
-Use a Windows PC with Git, Python 3, and **Arm GNU Toolchain 15.2.Rel1**. The PowerShell scripts expect the toolchain in `%LOCALAPPDATA%\FixFinder\ArmGCC\bin`. Pass `-ToolchainBin` with your compiler’s `bin` folder if it is installed elsewhere. Run the commands from the repository root in a PowerShell session that allows local build scripts.
+Use a Windows PC with Git, Python 3, and [Arm GNU Toolchain 15.2.Rel1](https://developer.arm.com/tools-and-software/gnu-toolchain#Downloads) for the `arm-none-eabi` target. The PowerShell scripts expect the toolchain in `%LOCALAPPDATA%\FixFinder\ArmGCC\bin`. Pass `-ToolchainBin` with your compiler’s `bin` folder if it is installed elsewhere. Run the commands from the repository root in a PowerShell session that allows local build scripts. You can build the loader and game BIN with the scanner unplugged.
+
+```powershell
+git clone https://github.com/sixtenths/FixFinder-Gamer.git
+Set-Location FixFinder-Gamer
+```
 
 Set `$wad` to a local DOOM 1.9 shareware `doom1.wad`. Keep game data and generated game images in ignored `build/` or outside the repository. The reducer checks the exact IWAD hash. The converter and engine must come from the same pinned GBADoom checkout. [Pinned GBADoom source and tools](https://github.com/doomhack/GBADoom/tree/25deefdb44427e068735d3ef2af1e9a44d5cac85)
 
 ```powershell
 $wad = 'C:\path\to\doom1.wad'
-$mapCount = 9  # Set to 1 for the one-map build.
+$mapCount = 1  # Use 9 only for the complete episode with a matching eMMC pack.
 New-Item -ItemType Directory -Force build | Out-Null
 $engine = 'build/GBADoom-engine'
 if (-not (Test-Path -LiteralPath $engine)) {
@@ -65,7 +97,7 @@ $loaderBin = Join-Path $loaderDir 'FixFinder-USB-Loader.bin'
 Get-FileHash -LiteralPath $loaderBin -Algorithm SHA256
 ```
 
-Install the loader at `0x08000000` using the [guarded SWD procedure](RECOVERY.md#install-the-resident-loader-once-over-swd). The game BIN uses USB and a separate address, `0x08008000`.
+The loader BIN is for the [guarded SWD procedure](RECOVERY.md#install-the-resident-loader-once-over-swd), after the read-only checks and backup. It goes at `0x08000000`. The game BIN uses USB and a separate address, `0x08008000`.
 
 ## Build the one-map arcade
 
@@ -135,7 +167,7 @@ With the viewer closed, `python scripts/Read-FixFinderStorage.py --serial $seria
 
 | What you see | What to check |
 | --- | --- |
-| No USB device | Use a known data cable and a direct PC port. Disconnect other scanners while identifying the target. |
+| No USB device | Use a known data cable and a direct PC port. The loader and game USB IDs only appear after the custom firmware is installed. |
 | Installer cannot find the loader | Start the installer, then reconnect scanner USB while it waits. |
 | BIN is rejected | Use the game BIN built with `-UsbGame`. The resident loader and SWD diagnostics use different addresses. |
 | Upload was interrupted | Reconnect USB and run the installer again. The loader starts the game after verification. |
