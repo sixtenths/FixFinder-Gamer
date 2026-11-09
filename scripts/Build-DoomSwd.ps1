@@ -10,11 +10,13 @@ param(
     [switch]$CompactReciprocal,
     [string]$BoardSource,
     [switch]$FixFinderLcd,
-    [switch]$UsbGame
+    [switch]$UsbGame,
+    [switch]$Arcade
 )
 
 $ErrorActionPreference = 'Stop'
 if ($BoardSource -and $FixFinderLcd) { throw 'Select one display backend.' }
+if ($Arcade -and (!$UsbGame -or !$FixFinderLcd)) { throw '-Arcade requires -FixFinderLcd and -UsbGame.' }
 $source = (Resolve-Path -LiteralPath $EngineSource).Path
 $wad = (Resolve-Path -LiteralPath $ConvertedWad).Path
 $board = if ($BoardSource) { (Resolve-Path -LiteralPath $BoardSource).Path }
@@ -123,6 +125,12 @@ char key[8] = {0};
     $runtime = Join-Path $build 'runtime.o'
     $display = Join-Path $build 'display.o'
     if ($UsbGame) { $platformFlags += '-DFIXFINDER_USB_GAME', '-DFIXFINDER_USB_VIDEO' }
+    if ($Arcade) {
+        $platformFlags += '-DFIXFINDER_ARCADE'
+        $arcadeObject = Join-Path $build 'arcade.o'
+        Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/arcade.c', '-o', $arcadeObject))
+        $boardObjects += $arcadeObject
+    }
     Invoke-Gcc ($platformFlags + @('-DFIXFINDER_DOOM_SWD', '-c', 'USB-Build-V8/app.c', '-o', $app))
     Invoke-Gcc ($platformFlags + @('-std=gnu23', "-I$engineIncludes", '-c',
         'firmware/doom-swd/runtime.c', '-o', $runtime))

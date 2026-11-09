@@ -20,6 +20,10 @@
 #include "z_zone.h"
 #include "display.h"
 #include "input.h"
+#ifdef FIXFINDER_ARCADE
+#include "arcade.h"
+#include "../usb-loader/protocol.h"
+#endif
 #ifdef FIXFINDER_DOOM_BOARD
 #include "v9_board.h"
 static const struct v9_lcd_board *doom_board;
@@ -124,6 +128,13 @@ void I_ProcessKeyEvents(void)
 #ifdef FIXFINDER_DOOM_BOARD
     pressed |= doom_board->read_buttons();
 #elif defined(FIXFINDER_DOOM_DCS)
+#ifdef FIXFINDER_ARCADE
+    if (fixfinder_arcade_exit(fixfinder_keys(milliseconds), milliseconds)) {
+        BOOT_COOKIE[0] = BOOT_GAME;
+        BOOT_COOKIE[1] = ~BOOT_GAME;
+        NVIC_SystemReset();
+    }
+#endif
     pressed |= fixfinder_buttons(milliseconds);
 #endif
     const uint32_t changed = pressed ^ previous;
@@ -254,6 +265,9 @@ void fixfinder_doom_run(void)
     }
     fixfinder_io_init();
     fixfinder_beep(90);
+#ifdef FIXFINDER_ARCADE
+    fixfinder_arcade_run((uint8_t *)doom_frame, &milliseconds);
+#endif
 #endif
     setvbuf(stdout, NULL, _IONBF, 0);
     I_PreInitGraphics();

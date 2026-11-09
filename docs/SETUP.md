@@ -131,7 +131,24 @@ $game = 'C:\path\to\FixFinder-Doom-LCD-USB.bin'
 python scripts/Install-UsbGame.py --serial $serial --wait 45 $game
 ```
 
-Wait for the CRC verification and game launch. One game fits in the slot at a time. The loader survives interrupted game installs and accepts a retry.
+Wait for the CRC verification and game launch. The slot holds one installable image at a time, which can contain several games. The loader survives interrupted game installs and accepts a retry.
+
+## Build and use HackerZone Arcade
+
+Add `-Arcade` to the DOOM build command with `-FixFinderLcd -CompactReciprocal -UsbGame`, then install the resulting game BIN over USB. This bundles six games in the same flash slot. The selector opens after the resident loader, and each selection shows its own title screen. Use **Erase** and **Down** to select a game and **Enter** to launch it. Hold **Down + Back** for one second to return to the selector.
+
+| Game | Controls |
+| --- | --- |
+| DOOM | The DOOM controls above apply. Hold Down + Back to leave DOOM and return to the selector. |
+| Snake | Use Erase, Down, Back, and Enter to steer up, down, left, and right. |
+| Maze Chase | Steer with the same four directions. Collect the dots and use the larger pellets to chase the ghosts. |
+| Pong | Use Erase and Down to move your paddle. Play against the scanner. |
+| Breakout | Move the paddle with Back and Enter. Clear the bricks before you lose three balls. |
+| Blockcraft | Walk with Erase and Down, turn with Back and Enter. Aim the crosshair and press Erase + Down to build or Back + Enter to dig. The small world resets when you leave the game. |
+
+Maze Chase is a Pac-Man-style game with an original maze. Blockcraft is a first-person block sandbox inspired by Minecraft Classic.
+
+## Troubleshoot installation
 
 | What you see | What to do |
 | --- | --- |

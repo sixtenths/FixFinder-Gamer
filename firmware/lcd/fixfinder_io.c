@@ -4,13 +4,6 @@
 #include "gd32f4xx_gpio.h"
 #include "gd32f4xx_rcu.h"
 
-enum key {
-    KEY_BACK = 1U << 0,
-    KEY_DOWN = 1U << 1,
-    KEY_ENTER = 1U << 2,
-    KEY_ERASE = 1U << 3
-};
-
 #define BACK_PIN  (1U << 0)  /* PG0 */
 #define DOWN_PIN  (1U << 4)  /* PF4 */
 #define ENTER_PIN (1U << 1)  /* PF1 */
@@ -82,7 +75,7 @@ void fixfinder_health_led(int health)
     }
 }
 
-uint32_t fixfinder_buttons(uint32_t now)
+uint32_t fixfinder_keys(uint32_t now)
 {
     static uint32_t candidate, stable, changed_at;
     uint32_t f = ~GPIO_ISTAT(GPIOF);
@@ -98,6 +91,12 @@ uint32_t fixfinder_buttons(uint32_t now)
         stable = candidate;
     }
 
+    return stable;
+}
+
+uint32_t fixfinder_buttons(uint32_t now)
+{
+    uint32_t stable = fixfinder_keys(now);
     switch (stable) {
     case KEY_BACK | KEY_ENTER: return DOOM_BUTTON_FIRE;
     case KEY_ERASE | KEY_DOWN: return DOOM_BUTTON_USE;
