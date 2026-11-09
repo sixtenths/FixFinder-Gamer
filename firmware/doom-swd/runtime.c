@@ -17,6 +17,10 @@
 #include "z_zone.h"
 #include "display.h"
 #include "input.h"
+#ifdef FIXFINDER_DOOM_BOARD
+#include "v9_board.h"
+static const struct v9_lcd_board *doom_board;
+#endif
 
 _Static_assert(SCREENWIDTH * sizeof(uint16_t) == DOOM_FRAME_WIDTH, "Doom pitch changed");
 _Static_assert(SCREENHEIGHT == DOOM_FRAME_HEIGHT, "Doom height changed");
@@ -104,7 +108,10 @@ void I_ProcessKeyEvents(void)
         { DOOM_BUTTON_STRAFE_RIGHT, KEYD_R },
     };
     static uint32_t previous;
-    const uint32_t pressed = doom_test_buttons;
+    uint32_t pressed = doom_test_buttons;
+#ifdef FIXFINDER_DOOM_BOARD
+    pressed |= doom_board->read_buttons();
+#endif
     const uint32_t changed = pressed ^ previous;
     previous = pressed;
     for (unsigned int i = 0; i < sizeof(bindings) / sizeof(bindings[0]); i++) {
@@ -124,7 +131,7 @@ unsigned short *I_GetFrontBuffer(void) { return doom_frame; }
 
 void doom_lcd_write_row(unsigned int row, const uint16_t *pixels)
 {
-    /* The diagnostic consumes the same RGB565 rows as a physical LCD backend. */
+    /* Sample the same RGB565 rows in both builds for the SWD frame hash. */
     for (unsigned int x = row % 31U; x < DOOM_LCD_WIDTH; x += 31U) {
         frame_hash = (frame_hash ^ pixels[x]) * 16777619U;
     }
@@ -137,7 +144,13 @@ void I_FinishUpdate_e32(const byte *frame, const byte *palette,
     (void)width;
     (void)height;
     frame_hash = 2166136261U;
+#ifdef FIXFINDER_DOOM_BOARD
+    if (!doom_display_hx8347(frame, &doom_board->bus, doom_lcd_write_row)) {
+        I_Error("LCD frame transfer failed");
+    }
+#else
     doom_display_present(frame);
+#endif
     doom_frame_hash = frame_hash;
     if (_g->gamestate == GS_LEVEL && _g->player.mo != NULL) {
         doom_player_x = _g->player.mo->x;
@@ -169,6 +182,17 @@ void fixfinder_doom_run(void)
     if (SysTick_Config(SystemCoreClock / 1000U) != 0) {
         I_Error("SysTick setup failed");
     }
+#ifdef FIXFINDER_DOOM_BOARD
+    doom_board = v9_lcd_board_init();
+    if (doom_board == NULL || !doom_board->landscape || doom_board->read_buttons == NULL) {
+        I_Error("DOOM requires an initialized landscape display and buttons");
+    }
+    uint8_t controller_id;
+    if (!hx8347_read_id(&doom_board->bus, &controller_id) ||
+        controller_id != doom_board->expected_id) {
+        I_Error("LCD controller ID check failed");
+    }
+#endif
     setvbuf(stdout, NULL, _IONBF, 0);
     I_PreInitGraphics();
     Z_Init();

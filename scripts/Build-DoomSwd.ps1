@@ -7,12 +7,14 @@ param(
     [string]$ConvertedWad,
 
     [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin",
-    [switch]$CompactReciprocal
+    [switch]$CompactReciprocal,
+    [string]$BoardSource
 )
 
 $ErrorActionPreference = 'Stop'
 $source = (Resolve-Path -LiteralPath $EngineSource).Path
 $wad = (Resolve-Path -LiteralPath $ConvertedWad).Path
+$board = if ($BoardSource) { (Resolve-Path -LiteralPath $BoardSource).Path }
 $toolchain = (Resolve-Path -LiteralPath $ToolchainBin).Path
 $root = Split-Path -Parent $PSScriptRoot
 $build = Join-Path $root "build/doom-swd-$([guid]::NewGuid())"
@@ -73,6 +75,16 @@ char key[8] = {0};
         "-I$usb/ustd/common", "-I$usb/ustd/class/hid")
     $platformFlags = @('-Os', '-ffunction-sections', '-fdata-sections', '-DGD32F427',
         '-DUSE_USB_HS', '-DUSE_EMBEDDED_PHY', '-DHXTAL_VALUE=8000000U') + $includes
+    $boardObjects = @()
+    if ($board) {
+        $platformFlags += '-DFIXFINDER_DOOM_BOARD', '-Ifirmware/lcd', '-Ifirmware/doom-swd'
+        $boardSources = @('firmware/lcd/hx8347.c', 'firmware/lcd/doom_hx8347.c', $board)
+        for ($i = 0; $i -lt $boardSources.Count; $i++) {
+            $object = Join-Path $build "board_$i.o"
+            Invoke-Gcc ($platformFlags + @('-c', $boardSources[$i], '-o', $object))
+            $boardObjects += $object
+        }
+    }
     $app = Join-Path $build 'app.o'
     $runtime = Join-Path $build 'runtime.o'
     $display = Join-Path $build 'display.o'
@@ -104,10 +116,12 @@ doom_iwad_len:
     $objects += @(Get-ChildItem -LiteralPath $engine -Filter '*.o' |
         Where-Object Name -notin 'engine.o', 'd_main.o', 'w_wad.o', 'z_zone.o' | ForEach-Object FullName)
     $objects += $app, $runtime, $display, $wadObject
+    $objects += $boardObjects
     $objects += @('d_main.o', 'w_wad.o', 'z_zone.o') | ForEach-Object { Join-Path $build $_ }
 
-    $elf = Join-Path $build 'FixFinder-Doom-SWD.elf'
-    $map = Join-Path $build 'FixFinder-Doom-SWD.map'
+    $name = if ($board) { 'FixFinder-Doom-Board' } else { 'FixFinder-Doom-SWD' }
+    $elf = Join-Path $build "$name.elf"
+    $map = Join-Path $build "$name.map"
     # An argument file keeps this link below the Windows command-line limit.
     $objectList = Join-Path $build 'objects.rsp'
     $objects | ForEach-Object { '"' + $_.Replace('\', '/') + '"' } |
@@ -115,7 +129,11 @@ doom_iwad_len:
     Invoke-Gcc @('-nostartfiles', '--specs=nano.specs', '--specs=nosys.specs',
         '-T', 'firmware/doom-swd/firmware.ld', '-Wl,--gc-sections,--print-memory-usage',
         "-Wl,-Map,$map", "@$objectList", '-o', $elf)
-    Write-Output "Linked SWD diagnostic ELF at $elf"
+    if ($board) {
+        Write-Output "Linked board game ELF at $elf"
+    } else {
+        Write-Output "Linked SWD diagnostic ELF at $elf"
+    }
 } finally {
     Pop-Location
 }

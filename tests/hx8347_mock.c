@@ -115,7 +115,7 @@ static bool check_game_frame(size_t fail_row)
     doom_display_set_palette(rgb);
     setup_frame(true, fail_row);
     mock.pattern = true;
-    return check_frame(doom_display_hx8347(indexed, &bus));
+    return check_frame(doom_display_hx8347(indexed, &bus, NULL));
 }
 
 static const uint16_t diagnostic_colors[] = {0xf800, 0x07e0, 0x001f, 0xffff, 0x0000};

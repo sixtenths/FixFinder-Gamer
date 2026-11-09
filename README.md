@@ -21,11 +21,13 @@ python scripts/Smoke-DoomSwd.py <output-elf>
 
 The smoke test uses Python with `unicorn` and `pyelftools`. It enters the linked game runtime after USB setup, supplies a synthetic clock, and exercises E1M1 with simulated movement, firing and release. It also checks all 76,800 RGB565 pixels emitted for a complete 320 x 240 frame. Add `--frame-output <preview.ppm>` to capture that frame.
 
-The linked ELF preserves the V8 USB startup path and keeps counters, an RGB565 frame hash, player coordinates and the last engine error readable over SWD. The display path scales the 240 x 160 indexed frame in TCM to a logical landscape frame through a 640-byte row buffer in AHB SRAM. The SWD diagnostic consumes rows in software. The physical LCD backend will consume the same rows once the panel bus and orientation are verified.
+The linked ELF preserves the V8 USB startup path and keeps counters, an RGB565 frame hash, player coordinates and the last engine error readable over SWD. The display path scales the 240 x 160 indexed frame in TCM to a logical landscape frame through a 640-byte row buffer in AHB SRAM. The default SWD diagnostic consumes rows in software.
 
 The diagnostic takes pressed actions from the `doom_test_buttons` word at the address reported by the current ELF. The [action bits](firmware/doom-swd/input.h) map to movement, turning, strafing, Fire, Use, Menu and Automap. The runtime sends key events on press and release so multiple actions can remain held together. Hold Use with Strafe Left or Right to cycle weapons. Add `--check-weapon-cycle` to verify both chords in emulation. Physical button wiring remains to be verified.
 
 Add `-CompactReciprocal` to build the smaller diagnostic variant. It replaces the engine's 1 MiB reciprocal lookup table with an equivalent calculation. The regular build is the variant tested on the scanner. The compact build has passed emulation and still needs target timing verification.
+
+`-BoardSource` enables the game build that sends each frame to an initialized landscape HX8347 transport and reads debounced buttons from the same board implementation used by V9. The board must supply measured GPIO mappings, confirm the controller and provide the `read_buttons` callback in [the board interface](firmware/lcd/v9_board.h). The build emits a separate `FixFinder-Doom-Board.elf`. This path has been exercised with a mock board in Cortex-M4 emulation. See the [LCD bring-up notes](docs/LCD.md) for the outstanding hardware checks.
 
 ### Three-map diagnostic
 

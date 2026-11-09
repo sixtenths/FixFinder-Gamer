@@ -29,7 +29,7 @@ Confirm interface straps, reset, command/data, chip select, bus direction, suppl
 
 The candidate HX8347 register layer in `firmware/lcd/hx8347.c` is ready for a verified board transport. It checks two page-zero ID reads for consistency, programs the inclusive window registers `0x02` through `0x09`, and streams RGB565 to GRAM `0x22`. The board transport is responsible for reset, power sequencing, lane mapping, chip select and bus turnaround. The register layer stays separate from the current firmware build while those details are open.
 
-The candidate adapter in `firmware/lcd/doom_hx8347.c` sends the game's landscape output through the same GRAM window. It reuses the existing scanline and closes the transfer after the last row or the first failed write. It requires an initialized board transport and stays outside the headless build.
+The candidate adapter in `firmware/lcd/doom_hx8347.c` sends the game's landscape output through the same GRAM window. It reuses the existing scanline and closes the transfer after the last row or the first failed write. The game build with `-BoardSource` uses the initialized transport and the board's debounced action callback. The headless build still consumes rows in software.
 
 The V9 color routine in `firmware/lcd/v9_color_test.c` takes a verified, initialized HX8347 transport and a delay callback. It requires the expected raw ID to corroborate the identified controller before writing a window. It displays red, green, blue, white and black for one second each and leaves black on screen. The `v9_lcd_progress` symbol exposes the phase, observed ID and current or last attempted RGB565 color for SWD inspection.
 
