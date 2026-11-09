@@ -9,9 +9,6 @@
 #include "pacman/z80.h"
 #include <string.h>
 #include <stdlib.h>
-#ifdef FIXFINDER_PACMAN_WAVETABLE
-#include "gd32f4xx.h"
-#endif
 
 #ifdef FIXFINDER_PACMAN_EMMC
 #include "game_library.h"
@@ -77,63 +74,13 @@ static void bus_write(void *state, uint16_t addr, uint8_t value)
     else if (addr>=0x5060 && addr<0x5070) board.pos[addr-0x5060]=value;
 }
 
-static uint32_t voice_increment(unsigned int voice)
+static uint32_t voice_pitch(unsigned int voice)
 {
     const uint8_t *reg=&board.sound[0x11+5*voice];
     uint32_t increment=(reg[3]<<16)|(reg[2]<<12)|(reg[1]<<8)|(reg[0]<<4);
     if (!voice) increment|=board.sound[0x10];
-    return increment;
-}
-
-#ifdef FIXFINDER_PACMAN_WAVETABLE
-extern const uint8_t pacman_sound_prom[256];
-static struct voice {
-    uint32_t step;
-    unsigned int base, volume;
-} voices[3];
-static uint32_t phases[3];
-
-static int16_t pacman_sample(void)
-{
-    int mix=0;
-    for (unsigned int i=0; i<3; ++i) {
-        if (voices[i].volume) {
-            unsigned int sample=voices[i].base+((phases[i]>>15)&31U);
-            mix+=((int)(pacman_sound_prom[sample]&15U)-8)*(int)voices[i].volume;
-            phases[i]+=voices[i].step;
-        }
-    }
-    return (int16_t)mix;
-}
-
-static void update_sound(void)
-{
-    struct voice next[3];
-    unsigned int active=0;
-    for (unsigned int i=0; i<3; ++i) {
-        /* The original 20-bit phase accumulator is clocked at 96 kHz. */
-        next[i].step=voice_increment(i)*(96000U/FIXFINDER_PCM_RATE);
-        next[i].base=(board.sound[5+5*i]&7U)*32;
-        next[i].volume=board.sound_enabled && next[i].step ? board.sound[0x15+5*i] : 0;
-        active|=next[i].volume;
-    }
-    if (!active) {
-        fixfinder_pcm_stop();
-        return;
-    }
-    uint32_t irq=__get_PRIMASK();
-    __disable_irq();
-    memcpy(voices,next,sizeof voices);
-    __set_PRIMASK(irq);
-    fixfinder_pcm_start(pacman_sample);
-}
-
-static void stop_sound(void) { fixfinder_pcm_stop(); }
-#else
-static uint32_t voice_pitch(unsigned int voice)
-{
     /* A 20-bit phase accumulator at 96 kHz. Play one octave higher on the beeper. */
-    return (voice_increment(voice)*375U+1024U)>>11;
+    return (increment*375U+1024U)>>11;
 }
 
 static uint32_t beeper_pitch(void)
@@ -160,10 +107,6 @@ static uint32_t beeper_pitch(void)
     }
     return pitch;
 }
-
-static void update_sound(void) { fixfinder_tone(beeper_pitch()); }
-static void stop_sound(void) { fixfinder_tone(0); }
-#endif
 
 static uint8_t port_in(z80 *cpu, uint8_t port)
 {
@@ -281,9 +224,6 @@ static void render(uint8_t *frame, bool first, uint8_t *previous, uint8_t *backg
 static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
 {
     fixfinder_set_led(FIXFINDER_LED_YELLOW);
-#ifdef FIXFINDER_PACMAN_WAVETABLE
-    memset(phases,0,sizeof phases);
-#endif
     memset(&board,0,sizeof board);
     memset(rgb,0,sizeof rgb);
     memset(frame,0,DOOM_FRAME_WIDTH*DOOM_FRAME_HEIGHT);
@@ -310,7 +250,7 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
     for (;;) {
         uint32_t now=*clock, keys=fixfinder_keys(now);
         if (fixfinder_arcade_exit(keys,now)) {
-            stop_sound();
+            fixfinder_tone(0);
             free(previous);
             free(background);
             return;
@@ -320,7 +260,7 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
         was_pause=pause;
         if (toggle) {
             paused=!paused;
-            stop_sound();
+            fixfinder_tone(0);
             if (paused) fixfinder_set_led(FIXFINDER_LED_YELLOW);
             render(frame,true,previous,background,paused);
             first_draw=false;
@@ -358,7 +298,7 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
         while ((int32_t)(board.cpu.cyc-cycle)<0) z80_step(&board.cpu);
         if (board.irq) z80_gen_int(&board.cpu,board.vector);
         if (ready) {
-            update_sound();
+            fixfinder_tone(beeper_pitch());
             uint8_t mode=board.ram[GAME_MODE];
             if (mode==3) {
                 played=true;
