@@ -2,6 +2,8 @@
 
 This guide targets the USB-C AutoZone FixFinder **5034VSM** with a **GD32F427ZK** and PCB marking **`PCB_2L_5034_REVC_TYPEC_20200319`**. [Board photos and LCD notes](LCD.md)
 
+The downloadable kit includes a prebuilt loader, six arcade games, and a starter game. It also includes a single command to fetch the pinned DOOM inputs and build the first map for USB install. The full build steps are below. [Kit quick start](KIT.md)
+
 ## Identify your scanner
 
 AutoZone uses the orange Fix Finder for its in-store scan service. Innova’s public catalog and update list provide no retail cross-reference for the `5034VSM`. Innova’s Windows updater 1.3.9 lists it under USB product IDs `064A` and `064B`. The project observed stock USB ID `1720:064A` on a physical scanner. [AutoZone Fix Finder service](https://www.autozone.com/lp/fix-finder) · [Innova update list](https://innova-electronics.helpscoutdocs.com/article/2692-innova-obd2-scan-tool-updates) · [Bench notes](LCD.md)

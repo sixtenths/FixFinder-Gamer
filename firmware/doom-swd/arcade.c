@@ -11,13 +11,20 @@
 #include "usb_video.h"
 #include "../lcd/fixfinder_io.h"
 #include "../usb-loader/screen_art.h"
+#ifndef FIXFINDER_ARCADE_ONLY
 #include "../usb-loader/doom_logo.h"
+#endif
 #include <stdlib.h>
 #include <string.h>
 
 enum color { BG, WHITE, MUTED, ORANGE, GREEN, RED, BLUE, YELLOW, PINK, PANEL,
              EDGE, INSET, BRAND = 16, DOOM_ART = 32, TEXT_PALETTE = 48 };
-enum game_id { DOOM, SNAKE, MAZE, PONG, BREAKOUT, RACER, DINO, GAME_COUNT };
+enum game_id {
+#ifndef FIXFINDER_ARCADE_ONLY
+    DOOM,
+#endif
+    SNAKE, MAZE, PONG, BREAKOUT, RACER, DINO, GAME_COUNT
+};
 enum { W = DOOM_FRAME_WIDTH, H = DOOM_FRAME_HEIGHT };
 
 static const uint8_t base_palette[768] = {
@@ -57,9 +64,9 @@ static const struct {
     const char *hint;
     uint8_t color;
 } games[] = {
-#ifdef FIXFINDER_EXTERNAL_DOOM_MAPS
+#if defined(FIXFINDER_EXTERNAL_DOOM_MAPS)
     [DOOM] = {"DOOM", "ACTION", "KNEE-DEEP IN THE DEAD", RED},
-#else
+#elif !defined(FIXFINDER_ARCADE_ONLY)
     [DOOM] = {"DOOM", "ACTION", "E1M1 HANGAR", RED},
 #endif
     [SNAKE] = {"SNAKE", "SURVIVAL", "FOUR KEYS STEER", GREEN},
@@ -530,6 +537,7 @@ static void unpack_art(uint8_t *dst, unsigned int size, const uint8_t *src)
     }
 }
 
+#ifndef FIXFINDER_ARCADE_ONLY
 static uint8_t doom_art[DOOM_LOGO_WIDTH*DOOM_LOGO_HEIGHT/2] __attribute__((section(".arcade_visual")));
 
 static void art(uint8_t *frame, int x, int y, int w, int h,
@@ -542,6 +550,7 @@ static void art(uint8_t *frame, int x, int y, int w, int h,
         frame[(y+row)*W+x+col]=index>=transparent?paper:first+index;
     }
 }
+#endif
 
 static void title(int y, const char *name)
 {
@@ -564,9 +573,11 @@ static void illustration(uint8_t *frame, int x, int y, enum game_id game)
     for (int col=1; col<80; col+=6)
         for (int row=1; row<49; row+=6) box(frame,x+col,y+row,1,1,EDGE);
     switch (game) {
+#ifndef FIXFINDER_ARCADE_ONLY
     case DOOM:
         art(frame,x+2,y+1,76,47,DOOM_LOGO_WIDTH,DOOM_LOGO_HEIGHT,doom_art,DOOM_ART,13,INSET);
         break;
+#endif
     case SNAKE:
         box(frame,x+10,y+30,34,7,GREEN);
         box(frame,x+36,y+14,8,22,GREEN);
@@ -647,10 +658,13 @@ static void splash(uint8_t *frame, const volatile uint32_t *clock, enum game_id 
         header(frame);
         box(frame,20,34,200,100,PANEL);
         box(frame,20,34,200,2,games[game].color);
+#ifndef FIXFINDER_ARCADE_ONLY
         if (game==DOOM) {
             art(frame,77,40,86,53,DOOM_LOGO_WIDTH,DOOM_LOGO_HEIGHT,doom_art,DOOM_ART,13,PANEL);
             text(120, 99, "Loading Doom", &ui_small, WHITE, PANEL, true);
-        } else {
+        } else
+#endif
+        {
             box(frame,80,39,80,49,INSET);
             illustration(frame,80,39,game);
             title(88,games[game].name);
@@ -684,9 +698,12 @@ static void selector(uint8_t *frame, unsigned int selected, unsigned int total)
         box(frame,223-i,74-i,2,2,MUTED);
         box(frame,223-i,74+i,2,2,MUTED);
     }
+#ifndef FIXFINDER_ARCADE_ONLY
     if (selected==DOOM) {
         art(frame,74,30,92,56,DOOM_LOGO_WIDTH,DOOM_LOGO_HEIGHT,doom_art,DOOM_ART,13,PANEL);
-    } else if (selected<GAME_COUNT) {
+    } else
+#endif
+    if (selected<GAME_COUNT) {
         illustration(frame,80,34,selected);
     } else {
         box(frame,101,44,38,32,INSET);
@@ -719,9 +736,11 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
     uint32_t previous=KEY_BACK|KEY_DOWN|KEY_ENTER|KEY_ERASE;
     memcpy(palette,base_palette,sizeof palette);
     import_colors(BRAND,logo_palette,sizeof logo_palette/sizeof *logo_palette);
-    import_colors(DOOM_ART,doom_logo_palette,sizeof doom_logo_palette/sizeof *doom_logo_palette);
     unpack_art(wordmark,sizeof wordmark,logo_data);
+#ifndef FIXFINDER_ARCADE_ONLY
+    import_colors(DOOM_ART,doom_logo_palette,sizeof doom_logo_palette/sizeof *doom_logo_palette);
     unpack_art(doom_art,sizeof doom_art,doom_logo_data);
+#endif
     doom_display_set_palette(palette);
     bool redraw = true;
     for (;;) {
@@ -759,6 +778,7 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                 splash(frame,clock,selected);
                 release_lcd_shadow();
                 switch (selected) {
+#ifndef FIXFINDER_ARCADE_ONLY
                 case DOOM:
 #if defined(FIXFINDER_EXTERNAL_DOOM_MAPS) || defined(FIXFINDER_PROVISION_DOOM_MAPS)
 #ifdef FIXFINDER_EXTERNAL_DOOM_MAPS
@@ -774,6 +794,7 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                     break;
 #else
                     return;
+#endif
 #endif
                 case SNAKE: snake(frame,clock); break;
                 case MAZE:

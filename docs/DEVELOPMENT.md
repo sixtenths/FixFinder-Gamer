@@ -16,12 +16,16 @@ Start with the [installation guide](SETUP.md) for the supported hardware and too
 
 ## Build a custom game for the USB loader
 
-Start from the [C display demo](../firmware/usb-loader/sample_game.c) and implement `fixfinder_game_run()`. The resident loader installs the Cortex-M4 Thumb image at `0x08008000`. It checks the vector table and CRC before booting. The maximum image size is 3,040 KiB. The split-episode build reserves the last 256 KiB of that slot for the active DOOM map.
+The [Pixel Catcher example](../examples/pixel-catcher/main.c) is a complete game. Its entry point is `fixfinder_game_main()`. The [game SDK header](../firmware/game-sdk/fixfinder.h) exposes the 240 × 160 indexed framebuffer, palette, millisecond clock, and board input and output functions. The SDK scales frames to the 320 × 240 LCD and serves the same frames to the USB viewer.
 
 ```powershell
-$demo = ./scripts/Build-UsbLoader.ps1 -GameSource firmware/usb-loader/sample_game.c
+$demo = ./scripts/Build-UsbLoader.ps1 -GameSdk -GameSource examples/pixel-catcher/main.c
 python scripts/Install-UsbGame.py --serial $serial (Join-Path $demo 'FixFinder-Game.bin')
 ```
+
+Copy the example to a new directory and pass its source path to `-GameSource`. For a game split across C files, pass a PowerShell array of source paths. Keep headers with the source and reference them from your C files. See the [kit quick start](KIT.md) for controls and deployment.
+
+The loader accepts a raw Cortex-M4 Thumb image linked at `0x08008000` and checks its vectors and CRC. The slot holds up to 3,040 KiB. The split-episode build reserves its last 256 KiB for the active DOOM map. For a low-level starting point that owns its own rendering loop, build the [display demo](../firmware/usb-loader/sample_game.c) with `-GameSource` and implement `fixfinder_game_run()`.
 
 ## Run checks
 

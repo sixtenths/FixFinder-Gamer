@@ -2,7 +2,7 @@
 
 Turn a compatible AutoZone FixFinder 5034VSM into a handheld arcade. Play DOOM and other games with the built-in screen, buttons, LEDs, and beeper, or stream the screen and play from a Windows PC over USB.
 
-**[Start with one scanner](docs/SETUP.md#start-with-one-scanner)** · **[J5 wiring photos](docs/RECOVERY.md#find-the-j5-holes)** · **[Games and controls](docs/PLAY.md)** · **[Developer guide](docs/DEVELOPMENT.md)** · **[Changelog](CHANGELOG.md)**
+**[Download the starter kit](https://github.com/sixtenths/FixFinder-Gamer/releases)** · **[Kit quick start](docs/KIT.md)** · **[Start with one scanner](docs/SETUP.md#start-with-one-scanner)** · **[J5 wiring photos](docs/RECOVERY.md#find-the-j5-holes)** · **[Games and controls](docs/PLAY.md)** · **[Developer guide](docs/DEVELOPMENT.md)**
 
 > **If this is your only diagnostic scanner, keep it stock if you still need it for cars.** Installing the arcade replaces factory firmware. There is no dual boot or verified factory restore in this project. You can check the board and build the software before deciding whether to flash.
 

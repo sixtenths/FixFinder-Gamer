@@ -17,7 +17,8 @@ param(
     [switch]$EmmcLibrary,
     [switch]$PacmanFromEmmc,
     [string]$ProvisionLibrary,
-    [string]$ProvisionDoomMaps
+    [string]$ProvisionDoomMaps,
+    [switch]$PassThru
 )
 
 $ErrorActionPreference = 'Stop'
@@ -67,7 +68,9 @@ if ($externalMaps -and (!$EmmcLibrary -or $packedSetup -or $ProvisionDoomMaps)) 
 }
 
 function Invoke-Gcc([string[]]$Arguments) {
-    & (Join-Path $toolchain 'arm-none-eabi-gcc.exe') @arch @Arguments
+    $gcc = Join-Path $toolchain 'arm-none-eabi-gcc.exe'
+    if ($PassThru) { & $gcc @arch @Arguments | Out-Host }
+    else { & $gcc @arch @Arguments }
     if ($LASTEXITCODE -ne 0) {
         throw "arm-none-eabi-gcc exited with code $LASTEXITCODE."
     }
@@ -390,7 +393,9 @@ doom_iwad_len:
         & (Join-Path $toolchain 'arm-none-eabi-objcopy.exe') -O binary $elf (Join-Path $build "$name.bin")
         if ($LASTEXITCODE -ne 0) { throw "Could not export $name.bin." }
     }
-    if ($board -or $FixFinderLcd) {
+    if ($PassThru) {
+        Write-Output $elf
+    } elseif ($board -or $FixFinderLcd) {
         Write-Output "Linked board game ELF at $elf"
     } else {
         Write-Output "Linked SWD diagnostic ELF at $elf"

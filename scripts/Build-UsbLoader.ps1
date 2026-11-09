@@ -1,17 +1,22 @@
 [CmdletBinding()]
 param(
     [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin",
-    [string]$GameSource,
+    [string[]]$GameSource,
+    [switch]$GameSdk,
+    [switch]$ArcadeOnly,
     [ValidateSet('UART3', 'USART0')]
     [string]$RadioUart,
     [switch]$RamTest
 )
 
 $ErrorActionPreference = 'Stop'
-if ($RamTest -and $GameSource) { throw 'Select -RamTest or -GameSource.' }
-if ($RadioUart -and $GameSource) { throw '-RadioUart applies to the resident loader.' }
+$buildGame = $GameSource -or $ArcadeOnly
+if ($ArcadeOnly -and ($GameSource -or $GameSdk)) { throw '-ArcadeOnly selects its own game sources.' }
+if ($GameSdk -and !$GameSource) { throw '-GameSdk requires -GameSource.' }
+if ($RamTest -and $buildGame) { throw '-RamTest applies to the resident loader.' }
+if ($RadioUart -and $buildGame) { throw '-RadioUart applies to the resident loader.' }
 $toolchain = (Resolve-Path -LiteralPath $ToolchainBin).Path
-if ($GameSource) { $GameSource = (Resolve-Path -LiteralPath $GameSource).Path }
+if ($GameSource) { $GameSource = @($GameSource | ForEach-Object { (Resolve-Path -LiteralPath $_).Path }) }
 $root = Split-Path -Parent $PSScriptRoot
 $work = Join-Path $root "build/usb-loader-$([guid]::NewGuid())"
 $arch = @('-mcpu=cortex-m4', '-mthumb')
@@ -35,7 +40,7 @@ function Export-Image([string]$Name, [string]$Linker, [string[]]$Layout, [string
     if ($LASTEXITCODE) { throw "Could not export $Name.bin." }
 }
 
-$v8 = & "$PSScriptRoot/Build-V8.ps1" -ToolchainBin $toolchain -PassThru -LoaderObjects:(!$GameSource)
+$v8 = & "$PSScriptRoot/Build-V8.ps1" -ToolchainBin $toolchain -PassThru -LoaderObjects:(!$buildGame)
 New-Item -ItemType Directory -Path $work | Out-Null
 Push-Location $root
 try {
@@ -50,14 +55,34 @@ try {
     $common = @(Get-ChildItem -LiteralPath $v8 -Filter 'part_*.o' |
         Where-Object Name -notin @('part_1.o', 'part_22.o') | ForEach-Object FullName)
 
-    if ($GameSource) {
+    if ($buildGame) {
         $defines = @('-DFIXFINDER_USB_GAME')
+        if ($GameSdk -or $ArcadeOnly) {
+            $defines += '-DFIXFINDER_USB_VIDEO', '-Ifirmware/game-sdk'
+        }
+        if ($ArcadeOnly) { $defines += '-DFIXFINDER_ARCADE_ONLY' }
         $objects = $common + @(
             (Compile 'USB-Build-V8/app.c' 'game-entry' $defines),
-            (Compile 'USB-Build-V8/custom_hid_core.c' 'game-hid' $defines),
-            (Compile $GameSource 'game' $defines))
+            (Compile 'USB-Build-V8/custom_hid_core.c' 'game-hid' $defines))
+        if ($GameSdk -or $ArcadeOnly) {
+            foreach ($unit in @('firmware/game-sdk/fixfinder.c', 'firmware/lcd/fixfinder_io.c',
+                'firmware/lcd/doom_dcs.c', 'firmware/doom-swd/display.c',
+                'firmware/doom-swd/usb_video.c', 'firmware/doom-swd/usb_input.c')) {
+                $objects += Compile $unit ([IO.Path]::GetFileNameWithoutExtension($unit)) $defines
+            }
+        }
+        if ($ArcadeOnly) {
+            $objects += Compile 'firmware/doom-swd/arcade.c' 'arcade' $defines
+            foreach ($game in @('racer', 'dino')) {
+                $objects += Compile "firmware/doom-swd/$game.c" $game ($defines + '-O2')
+            }
+        }
+        for ($i = 0; $i -lt $GameSource.Count; ++$i) {
+            $objects += Compile $GameSource[$i] "game-$i" $defines
+        }
         $layout = @('-Wl,--defsym,__fixfinder_app_base=0x08008000')
-        Export-Image 'FixFinder-Game' 'firmware/doom-swd/firmware.ld' $layout $objects
+        $name = if ($ArcadeOnly) { 'FixFinder-Arcade' } else { 'FixFinder-Game' }
+        Export-Image $name 'firmware/doom-swd/firmware.ld' $layout $objects
     } else {
         $defines = @('-DFIXFINDER_USB_LOADER', '-Oz', '-flto')
         $layout = @('-Oz', '-flto')
