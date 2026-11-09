@@ -17,23 +17,25 @@ CHIPS = (
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sound-only", action="store_true", help="Extract the waveform PROM.")
     parser.add_argument("output", type=Path)
     parser.add_argument("archives", type=Path, nargs="+")
     args = parser.parse_args()
+    chips = (("82s126.1m", 256, 0xA9CC86BF),) if args.sound_only else CHIPS
     found = {}
-    signatures = {(length, crc): name for name, length, crc in CHIPS}
+    signatures = {(length, crc): name for name, length, crc in chips}
     for path in args.archives:
         with ZipFile(path) as archive:
             for member in archive.infolist():
                 name = signatures.get((member.file_size, member.CRC))
                 if name and name not in found:
                     found[name] = archive.read(member)
-    missing = [name for name, _, _ in CHIPS if name not in found]
+    missing = [name for name, _, _ in chips if name not in found]
     if missing:
         parser.error("missing matching chips: " + ", ".join(missing) +
                      "; a split set may also need puckman.zip")
-    args.output.write_bytes(b"".join(found[name] for name, _, _ in CHIPS))
-    print(f"Verified {len(CHIPS)} Midway Pac-Man chips against the MAME manifest.")
+    args.output.write_bytes(b"".join(found[name] for name, _, _ in chips))
+    print(f"Verified {len(chips)} Midway Pac-Man chip(s) against the MAME manifest.")
 
 if __name__ == "__main__":
     main()

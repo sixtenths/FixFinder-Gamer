@@ -20,6 +20,9 @@ void fixfinder_health_led(int health);
 void fixfinder_set_led(enum fixfinder_led led);
 void fixfinder_beep(uint32_t duration_ms);
 void fixfinder_tone(uint32_t hz); /* Zero stops the tone. */
+#define FIXFINDER_PCM_RATE 48000U
+void fixfinder_pcm_start(int16_t (*sample)(void)); /* Samples must be -512 through 511. */
+void fixfinder_pcm_stop(void);
 void fixfinder_io_tick(void);
 
 #endif

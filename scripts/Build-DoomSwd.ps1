@@ -13,6 +13,7 @@ param(
     [switch]$UsbGame,
     [switch]$Arcade,
     [string[]]$PacmanRom,
+    [string[]]$PacmanSoundRom,
     [switch]$StorageProbe,
     [switch]$EmmcLibrary,
     [switch]$PacmanFromEmmc,
@@ -23,6 +24,7 @@ $ErrorActionPreference = 'Stop'
 if ($BoardSource -and $FixFinderLcd) { throw 'Select one display backend.' }
 if ($Arcade -and (!$UsbGame -or !$FixFinderLcd)) { throw '-Arcade requires -FixFinderLcd and -UsbGame.' }
 if ($PacmanRom -and !$Arcade) { throw '-PacmanRom requires -Arcade.' }
+if ($PacmanSoundRom -and !($PacmanRom -or $PacmanFromEmmc)) { throw '-PacmanSoundRom requires a Pac-Man build.' }
 if ($StorageProbe -and !$Arcade) { throw '-StorageProbe requires -Arcade.' }
 if ($EmmcLibrary -and !$Arcade) { throw '-EmmcLibrary requires -Arcade.' }
 if ($PacmanFromEmmc -and !$EmmcLibrary) { throw '-PacmanFromEmmc requires -EmmcLibrary.' }
@@ -174,6 +176,22 @@ fixfinder_pack_end:
         }
         if ($PacmanRom -or $PacmanFromEmmc) {
             $platformFlags += '-DFIXFINDER_PACMAN'
+            if ($PacmanSoundRom) {
+                $platformFlags += '-DFIXFINDER_PACMAN_WAVETABLE'
+                $sound = (Join-Path $build 'pacman-sound.rom').Replace('\', '/')
+                & python -B scripts/Pack-PacmanRom.py --sound-only $sound @PacmanSoundRom
+                if ($LASTEXITCODE -ne 0) { throw 'Could not extract the Pac-Man sound PROM.' }
+                $soundSource = Join-Path $build 'pacman-sound.S'
+                $soundObject = Join-Path $build 'pacman-sound.o'
+                @"
+.section .rodata.pacman_sound,"a",%progbits
+.global pacman_sound_prom
+pacman_sound_prom:
+.incbin "$sound"
+"@ | Set-Content -LiteralPath $soundSource -Encoding ascii
+                Invoke-Gcc @('-c', $soundSource, '-o', $soundObject)
+                $boardObjects += $soundObject
+            }
             if ($PacmanRom) {
                 $packedRom = Join-Path $build 'pacman.rom'
                 & python -B scripts/Pack-PacmanRom.py $packedRom @PacmanRom

@@ -154,7 +154,7 @@ $pacman = @('C:\roms\pacman.zip', 'C:\roms\puckman.zip')
     -FixFinderLcd -CompactReciprocal -UsbGame -Arcade -PacmanRom $pacman
 ```
 
-The build verifies the program, graphics, and color ROM checksums against [MAME's Midway manifest](https://github.com/mamedev/mame/blob/master/src/mame/pacman/pacman.cpp). ROM files stay local. Pac-Man auto-starts after its self-test. **Erase + Enter** inserts a coin and starts another game. Press **Enter + Back** on the scanner or **P** in the USB viewer to pause or resume. Steer with the same four keys as Maze Chase. The scanner beeper plays the opening melody on its own and follows the loudest active voice during play. The tones are raised an octave for the beeper.
+The build verifies the program, graphics, and color ROM checksums against [MAME's Midway manifest](https://github.com/mamedev/mame/blob/master/src/mame/pacman/pacman.cpp). ROM files stay local. Pac-Man auto-starts after its self-test. **Erase + Enter** inserts a coin and starts another game. Press **Enter + Back** on the scanner or **P** in the USB viewer to pause or resume. Steer with the same four keys as Maze Chase.
 
 The USB game slot and the eMMC are separate. With `-Arcade -EmmcLibrary`, the game checks the board's FAT32 eMMC for `FFARCADE.PAK` and adds the pack's games to the selector. This reads the existing filesystem and uses no eMMC writes during gameplay. A missing or unreadable pack leaves the built-in games available.
 
@@ -172,6 +172,8 @@ The LEDs are off in the selector and yellow while a game loads. During play they
 | eMMC bonus games | Running | Game sound or waiting for a key | Program stopped |
 
 Add `-PacmanFromEmmc` to load Pac-Man from `PACMAN.ROM` on that same volume. For the first install on scanner 1, combine it with `-PacmanRom $pacman` so the firmware can create and verify the file. Subsequent builds can omit `-PacmanRom` and load the existing file into RAM when Pac-Man starts.
+
+Add `-PacmanSoundRom $pacman` to extract the verified `82s126.1m` waveform PROM from the local archives. That build mixes all three original Namco sound voices and plays them through the scanner's one-bit beeper output. With `-PacmanFromEmmc`, this flag works with the existing `PACMAN.ROM` on the scanner. The output has the beeper's bandwidth and volume limits. Builds without the sound PROM use the pitch-only beeper mode.
 
 The starter pack uses five games from the [CC0 CHIP-8 Archive](https://github.com/JohnEarnest/chip8Archive/tree/761e3ffc63f43e6a849e80714122feff2afca208), played through [C-Octo](https://github.com/JohnEarnest/c-octo/tree/102994e6166236045a067efa930a88532510e03e). Existing six-game packs still load. The selector skips the old Dino Run entry and shows Neon Circuit in its place.
 
