@@ -1,5 +1,10 @@
 /build/
 /.codex-attachments/
+__pycache__/
+*.py[cod]
+*.wad
+*.rom
+*.pak
 /GD32F4xx_Firmware_Library/Docs/
 /GD32F4xx_Firmware_Library/Examples/
 /GD32F4xx_Firmware_Library/Template/

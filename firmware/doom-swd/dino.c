@@ -112,7 +112,7 @@ static const uint8_t *lcd_row(const void *frame,unsigned int y)
 
 static const uint8_t *preview_row(const void *frame,unsigned int y)
 {
-    static uint8_t row[DOOM_FRAME_WIDTH] __attribute__((section(".arcade_art")));
+    static uint8_t row[DOOM_FRAME_WIDTH] __attribute__((section(".arcade_visual")));
     const uint8_t *source=lcd_row(frame,y*H/DOOM_FRAME_HEIGHT);
     for (unsigned int x=0;x<DOOM_FRAME_WIDTH;++x) row[x]=source[x*W/DOOM_FRAME_WIDTH];
     return row;

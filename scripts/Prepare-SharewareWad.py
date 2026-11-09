@@ -5,6 +5,7 @@ import hashlib
 from pathlib import Path
 import re
 import struct
+import zlib
 
 
 HEADER = struct.Struct("<4sII")
@@ -18,6 +19,8 @@ MAP_LUMPS = (
 SETUP_LUMPS = {b"THINGS", b"SIDEDEFS", b"SSECTORS", b"SECTORS"}
 SETUP_CAPACITY = 21 * 1024
 PACKED_SETUP = 1 << 31
+EXTERNAL_MAP = 1 << 30
+MAP_SLOT_SIZE = 256 * 1024
 # Texture animation intervals from the pinned engine's p_spec.c.
 ANIMATIONS = (
     (b"BLODGR1", b"BLODGR4"), (b"SLADRIP1", b"SLADRIP3"),
@@ -67,6 +70,9 @@ def reduce_iwad(raw, map_count):
         textures.append((name8(texture_data[offset:offset + 8]),
                          bytearray(texture_data[offset:offset + 22 + patch_count * 10])))
     names = [name for name, _ in textures]
+    # The renderer treats texture index zero as "no texture". Preserve the
+    # original first entry so a playable texture never takes that slot.
+    used_textures.add(names[0])
     for first, last in ANIMATIONS:
         if first in names and last in names:
             frames = names[names.index(first):names.index(last) + 1]
@@ -229,6 +235,61 @@ def deduplicate_converted(raw, compact_patches=False, compress_setup=False):
     return output
 
 
+def split_episode_maps(raw):
+    """Keep the converted map directory in flash and put its payloads in a pack."""
+    magic, count, directory = HEADER.unpack_from(raw)
+    directory_end = directory + count * ENTRY.size
+    if magic != b"IWAD" or directory != HEADER.size or directory_end > len(raw):
+        raise ValueError("Expected a converted IWAD")
+    entries = list(ENTRY.iter_unpack(raw[directory:directory_end]))
+    names = [name8(name) for _, _, name in entries]
+    maps = {}
+    payloads = []
+    for name in MAP_NAMES:
+        start = names.index(name) + 1
+        if tuple(names[start:start + len(MAP_LUMPS)]) != MAP_LUMPS:
+            raise ValueError(f"Unexpected layout for {name.decode()}")
+        payload = bytearray()
+        for i in range(start, start + len(MAP_LUMPS)):
+            pos, size, _ = entries[i]
+            if pos < 0 or size < 0 or (size and (pos < directory_end or pos + size > len(raw))):
+                raise ValueError(f"Invalid map lump {names[i]!r}")
+            maps[i] = EXTERNAL_MAP | len(payload)
+            payload.extend(raw[pos:pos + size])
+            payload.extend(b"\0" * (-len(payload) % 4))
+        if not 0 < len(payload) <= MAP_SLOT_SIZE:
+            raise ValueError(f"{name.decode()} exceeds the map slot")
+        payloads.append(payload)
+
+    table = bytearray(struct.pack("<8sI", b"FFDOOM1\0", len(payloads)))
+    offset = len(table) + 12 * len(payloads)
+    for payload in payloads:
+        table += struct.pack("<III", offset, len(payload), zlib.crc32(payload))
+        offset += len(payload)
+
+    output = bytearray(directory_end + ENTRY.size)
+    HEADER.pack_into(output, 0, magic, count + 1, directory)
+    locations = {}
+    for i, (pos, size, name) in enumerate(entries):
+        if i in maps:
+            target = maps[i]
+        elif not size:
+            target = 0
+        else:
+            if pos < directory_end or pos + size > len(raw):
+                raise ValueError(f"Invalid IWAD lump {name!r}")
+            if (pos, size) not in locations:
+                output.extend(b"\0" * (-len(output) % 4))
+                locations[pos, size] = len(output)
+                output.extend(raw[pos:pos + size])
+            target = locations[pos, size]
+        ENTRY.pack_into(output, directory + i * ENTRY.size, target, size, name)
+    output.extend(b"\0" * (-len(output) % 4))
+    ENTRY.pack_into(output, directory_end, len(output), len(table), b"FFMAPTAB")
+    output.extend(table)
+    return output, table + b"".join(payloads)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path)
@@ -237,6 +298,8 @@ def main():
     mode.add_argument("--maps", type=int, choices=range(1, 10))
     mode.add_argument("--deduplicate-converted", action="store_true",
                       help="Share identical lump bytes after GbaWadUtil conversion")
+    mode.add_argument("--split-episode-maps", type=Path, metavar="PACK",
+                      help="Move the converted E1M1–E1M9 level data to a map pack")
     parser.add_argument("--compact-patches", action="store_true",
                         help="Also share identical pixel columns within converted shareware patches")
     parser.add_argument("--compress-setup", action="store_true",
@@ -248,7 +311,13 @@ def main():
         parser.error("--compact-patches and --compress-setup require --deduplicate-converted")
     try:
         raw = args.input.read_bytes()
-        if args.deduplicate_converted:
+        if args.split_episode_maps:
+            if args.split_episode_maps.resolve() in (args.input.resolve(), args.output.resolve()):
+                parser.error("Choose a separate map pack output path")
+            reduced, pack = split_episode_maps(raw)
+            args.split_episode_maps.write_bytes(pack)
+            message = f"Split episode into {len(reduced):,} asset bytes and {len(pack):,} map bytes"
+        elif args.deduplicate_converted:
             reduced = deduplicate_converted(raw, args.compact_patches, args.compress_setup)
             message = f"Deduplicated converted IWAD ({len(raw) - len(reduced):,} bytes saved)"
         else:

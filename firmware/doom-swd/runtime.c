@@ -34,6 +34,52 @@ static const struct v9_lcd_board *doom_board;
 #include "sounds.h"
 bool doom_dcs_init(void);
 void doom_dcs_present(const uint8_t *frame);
+
+struct sound_step {
+    uint16_t hz, ms;
+};
+
+enum sound_priority { AMBIENCE = 1, WEAPON, IMPACT, ALERT };
+
+static const struct sound_step pistol[] = {{1050, 8}, {540, 11}, {270, 20}, {0, 0}};
+static const struct sound_step shotgun[] = {{1450, 6}, {390, 13}, {780, 7}, {205, 28}, {145, 20}, {0, 0}};
+static const struct sound_step cock[] = {{580, 12}, {0, 15}, {860, 11}, {340, 17}, {0, 0}};
+static const struct sound_step plasma[] = {{720, 9}, {1180, 10}, {1780, 14}, {0, 0}};
+static const struct sound_step rocket[] = {{285, 18}, {430, 23}, {650, 22}, {0, 0}};
+static const struct sound_step blast[] = {{980, 5}, {230, 24}, {365, 10}, {155, 46}, {0, 0}};
+static const struct sound_step pickup[] = {{880, 27}, {1320, 36}, {0, 0}};
+static const struct sound_step weapon[] = {{660, 25}, {990, 25}, {1480, 50}, {0, 0}};
+static const struct sound_step door_open[] = {{170, 27}, {220, 33}, {285, 40}, {0, 0}};
+static const struct sound_step door_close[] = {{285, 32}, {220, 28}, {165, 36}, {0, 0}};
+static const struct sound_step click[] = {{1050, 10}, {430, 22}, {0, 0}};
+static const struct sound_step pain[] = {{510, 23}, {320, 22}, {220, 34}, {0, 0}};
+static const struct sound_step death[] = {{545, 34}, {385, 44}, {240, 58}, {140, 75}, {0, 0}};
+
+static const struct sound_step *sound_step;
+static uint16_t sound_remaining;
+static enum sound_priority sound_priority;
+
+static void doom_sound_tick(void)
+{
+    if (sound_remaining && --sound_remaining == 0) {
+        ++sound_step;
+        sound_remaining = sound_step->ms;
+        fixfinder_tone(sound_step->hz);
+    }
+}
+
+static void doom_sound_start(const struct sound_step *steps, enum sound_priority priority)
+{
+    const uint32_t interrupt_mask = __get_PRIMASK();
+    __disable_irq();
+    if (!sound_remaining || priority >= sound_priority) {
+        sound_step = steps;
+        sound_remaining = steps->ms;
+        sound_priority = priority;
+        fixfinder_tone(steps->hz);
+    }
+    __set_PRIMASK(interrupt_mask);
+}
 #endif
 
 _Static_assert(SCREENWIDTH * sizeof(uint16_t) == DOOM_FRAME_WIDTH, "Doom pitch changed");
@@ -65,6 +111,7 @@ void SysTick_Handler(void)
 #endif
 #ifdef FIXFINDER_DOOM_DCS
     fixfinder_io_tick();
+    doom_sound_tick();
 #endif
 }
 
@@ -213,30 +260,60 @@ int I_StartSound(int id, int channel, int volume, int separation)
         switch (id) {
         case sfx_pistol:
         case sfx_chgun:
-            fixfinder_beep(45);
+            doom_sound_start(pistol, WEAPON);
             break;
         case sfx_shotgn:
         case sfx_dshtgn:
+            doom_sound_start(shotgun, WEAPON);
+            break;
+        case sfx_sgcock:
+        case sfx_dbopn:
+        case sfx_dbcls:
+        case sfx_dbload:
+            doom_sound_start(cock, AMBIENCE);
+            break;
         case sfx_rlaunc:
+        case sfx_firsht:
+            doom_sound_start(rocket, WEAPON);
+            break;
         case sfx_plasma:
         case sfx_bfg:
+            doom_sound_start(plasma, WEAPON);
+            break;
         case sfx_rxplod:
-            fixfinder_beep(85);
+        case sfx_firxpl:
+        case sfx_barexp:
+            doom_sound_start(blast, IMPACT);
             break;
         case sfx_itemup:
+            doom_sound_start(pickup, AMBIENCE);
+            break;
         case sfx_wpnup:
+        case sfx_getpow:
+            doom_sound_start(weapon, IMPACT);
+            break;
+        case sfx_doropn:
+        case sfx_bdopn:
+        case sfx_pstart:
+            doom_sound_start(door_open, AMBIENCE);
+            break;
+        case sfx_dorcls:
+        case sfx_bdcls:
+        case sfx_pstop:
+            doom_sound_start(door_close, AMBIENCE);
+            break;
         case sfx_swtchn:
         case sfx_swtchx:
-        case sfx_doropn:
         case sfx_oof:
-            fixfinder_beep(35);
+        case sfx_noway:
+            doom_sound_start(click, AMBIENCE);
             break;
         case sfx_plpain:
-            fixfinder_beep(70);
+            doom_sound_start(pain, IMPACT);
             break;
         case sfx_pldeth:
         case sfx_pdiehi:
-            fixfinder_beep(160);
+            doom_sound_start(death, ALERT);
             break;
         }
     }

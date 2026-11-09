@@ -16,7 +16,8 @@ param(
     [switch]$StorageProbe,
     [switch]$EmmcLibrary,
     [switch]$PacmanFromEmmc,
-    [string]$ProvisionLibrary
+    [string]$ProvisionLibrary,
+    [string]$ProvisionDoomMaps
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,7 +28,9 @@ if ($StorageProbe -and !$Arcade) { throw '-StorageProbe requires -Arcade.' }
 if ($EmmcLibrary -and !$Arcade) { throw '-EmmcLibrary requires -Arcade.' }
 if ($PacmanFromEmmc -and !$EmmcLibrary) { throw '-PacmanFromEmmc requires -EmmcLibrary.' }
 if ($ProvisionLibrary -and !$EmmcLibrary) { throw '-ProvisionLibrary requires -EmmcLibrary.' }
+if ($ProvisionDoomMaps -and !$EmmcLibrary) { throw '-ProvisionDoomMaps requires -EmmcLibrary.' }
 if ($ProvisionLibrary) { $ProvisionLibrary = (Resolve-Path -LiteralPath $ProvisionLibrary).Path }
+if ($ProvisionDoomMaps) { $ProvisionDoomMaps = (Resolve-Path -LiteralPath $ProvisionDoomMaps).Path }
 $source = (Resolve-Path -LiteralPath $EngineSource).Path
 $wad = (Resolve-Path -LiteralPath $ConvertedWad).Path
 $board = if ($BoardSource) { (Resolve-Path -LiteralPath $BoardSource).Path }
@@ -46,15 +49,21 @@ if ($lumpCount -gt [Math]::Floor(($wadBytes.Length - 12) / 16)) {
     throw 'Converted IWAD directory extends past the file.'
 }
 $packedSetup = $false
+$externalMaps = $false
 for ($i = 0; $i -lt $lumpCount; $i++) {
     $entry = 12 + 16 * $i
-    if ([BitConverter]::ToInt32($wadBytes, $entry) -lt 0) {
+    $position = [BitConverter]::ToInt32($wadBytes, $entry)
+    if ($position -band 0x40000000) { $externalMaps = $true }
+    if ($position -lt 0) {
         $name = [Text.Encoding]::ASCII.GetString($wadBytes, $entry + 8, 8).TrimEnd([char]0)
         if ($name -cnotin 'THINGS', 'SIDEDEFS', 'SSECTORS', 'SECTORS') {
             throw "Packed data is only supported for setup lumps. Unexpected lump $name."
         }
         $packedSetup = $true
     }
+}
+if ($externalMaps -and (!$EmmcLibrary -or $packedSetup -or $ProvisionDoomMaps)) {
+    throw 'Split DOOM maps require -EmmcLibrary and a separate map provisioning build.'
 }
 
 function Invoke-Gcc([string[]]$Arguments) {
@@ -65,11 +74,12 @@ function Invoke-Gcc([string[]]$Arguments) {
 }
 
 function Replace-EngineSource([string]$Name, [string]$Pattern, [string]$Replacement, [int]$Count = 1) {
-    $original = Get-Content -LiteralPath (Join-Path $source "source/$Name.c") -Raw
+    $copy = Join-Path $build "$Name.c"
+    $inputPath = if (Test-Path -LiteralPath $copy) { $copy } else { Join-Path $source "source/$Name.c" }
+    $original = Get-Content -LiteralPath $inputPath -Raw
     $matches = [regex]::Matches($original, $Pattern)
     if ($matches.Count -ne $Count) { throw "Unexpected source layout in $Name.c." }
     $modified = [regex]::Replace($original, $Pattern, $Replacement)
-    $copy = Join-Path $build "$Name.c"
     Set-Content -LiteralPath $copy -Value $modified -NoNewline -Encoding ascii
     Invoke-Gcc ($engineFlags + @('-c', $copy, '-o', (Join-Path $build "$Name.o")))
 }
@@ -88,15 +98,104 @@ try {
     # A single-map image boots directly into E1M1. Avoid a 64-bit access to the
     # WAD directory, which the converter only aligns to four bytes.
     Replace-EngineSource d_main 'D_StartTitle\(\);\s*// start up intro loop' 'G_DeferedInitNew(sk_medium, 1, 1);'
-    Replace-EngineSource w_wad '(?s)int_64_t nameint = 0;.*?if\(nameint == nameint2\)' @'
+    $wadSource = Get-Content -LiteralPath (Join-Path $source 'source/w_wad.c') -Raw
+    $wadLookup = '(?s)int_64_t nameint = 0;.*?if\(nameint == nameint2\)'
+    if ([regex]::Matches($wadSource, $wadLookup).Count -ne 1) { throw 'Unexpected WAD lookup layout.' }
+    $wadSource = [regex]::Replace($wadSource, $wadLookup, @'
 char key[8] = {0};
         strncpy(key, name, sizeof(key));
         for (int i = header->numlumps - 1; i >= 0; i--)
         {
             if (memcmp(key, fileinfo[i].name, sizeof(key)) == 0)
-'@
-    Replace-EngineSource z_zone 'maxHeapSize = \(256 \* 1024\);' 'maxHeapSize = (144 * 1024);'
+'@)
+    if ($externalMaps) {
+        $return = 'return (const void*)&doom_iwad[l->filepos];'
+        if ([regex]::Matches($wadSource, [regex]::Escape($return)).Count -ne 1) {
+            throw 'Unexpected WAD lump layout.'
+        }
+        $wadSource = $wadSource.Replace($return, @'
+if ((uint32_t)l->filepos & FIXFINDER_EXTERNAL_MAP)
+            return doom_staged_lump((uint32_t)l->filepos & ~FIXFINDER_EXTERNAL_MAP, l->size);
+        return (const void*)&doom_iwad[l->filepos];
+'@)
+        $engineFlags += '-include', 'firmware/doom-swd/episode_maps.h'
+    }
+    $wadCopy = Join-Path $build 'w_wad.c'
+    Set-Content -LiteralPath $wadCopy -Value $wadSource -NoNewline -Encoding ascii
+    Invoke-Gcc ($engineFlags + @('-c', $wadCopy, '-o', (Join-Path $build 'w_wad.o')))
+    $zoneKiB = if ($externalMaps) { 155 } else { 144 }
+    Replace-EngineSource z_zone 'maxHeapSize = \(256 \* 1024\);' "maxHeapSize = ($zoneKiB * 1024);"
     $replacements = @('d_main.o', 'w_wad.o', 'z_zone.o')
+    if ($externalMaps) {
+        Replace-EngineSource p_setup 'lumpnum = W_GetNumForName\(lumpname\);' @'
+lumpnum = W_GetNumForName(lumpname);
+    doom_stage_map(episode, map);
+'@
+        Replace-EngineSource p_setup '(?s)_g->thingPool = Z_Calloc\(numthings, sizeof\(mobj_t\), PU_LEVEL, NULL\);\s*_g->thingPoolSize = numthings;\s*for\(int i = 0; i < numthings; i\+\+\)' @'
+/* Match P_SpawnMapThing's skill and single-player filters. The pool
+       only needs entries for things that can spawn on this run. */
+    const unsigned int skill = _g->gameskill <= sk_easy ? MTF_EASY :
+                               _g->gameskill >= sk_hard ? MTF_HARD : MTF_NORMAL;
+    int pool_size = 0;
+    for (int j = 0; j < numthings; ++j) {
+        const int type = data[j].type;
+        const unsigned int flags = data[j].options;
+        if (type == 1 || (type > 4 && P_IsDoomnumAllowed(type) &&
+                          (flags & (MTF_NOTSINGLE | skill)) == skill))
+            ++pool_size;
+    }
+    _g->thingPool = Z_Calloc(pool_size, sizeof(mobj_t), PU_LEVEL, NULL);
+    _g->thingPoolSize = pool_size;
+
+    for (int i = 0; i < pool_size; ++i)
+'@
+        Replace-EngineSource p_setup '_g->linedata = Z_Calloc\(_g->numlines,sizeof\(linedata_t\),PU_LEVEL,0\);' @'
+_g->linedata = doom_map_line_storage(_g->numlines * sizeof(linedata_t));
+    if (!_g->linedata)
+        _g->linedata = Z_Calloc(_g->numlines,sizeof(linedata_t),PU_LEVEL,0);
+'@
+        Replace-EngineSource p_setup 'Z_FreeTags\(PU_LEVEL, PU_PURGELEVEL-1\);' @'
+Z_FreeTags(PU_LEVEL, PU_PURGELEVEL-1);
+    P_ResetSecnodePool();
+'@
+        Replace-EngineSource p_map 'msecnode_t\* P_AddSecnode\(' @'
+/* Allocate sector links in batches to avoid a zone header for each link. */
+static msecnode_t *free_secnodes;
+
+void P_ResetSecnodePool(void)
+{
+    free_secnodes = NULL;
+}
+
+static msecnode_t *P_NewSecnode(void)
+{
+    if (!free_secnodes) {
+        const unsigned int count = 16;
+        msecnode_t *batch = Z_Malloc(count * sizeof *batch, PU_LEVEL, NULL);
+        for (unsigned int i = 0; i + 1 < count; ++i)
+            batch[i].m_tnext = &batch[i + 1];
+        batch[count - 1].m_tnext = NULL;
+        free_secnodes = batch;
+    }
+    msecnode_t *node = free_secnodes;
+    free_secnodes = node->m_tnext;
+    return node;
+}
+
+msecnode_t* P_AddSecnode(
+'@
+        Replace-EngineSource p_map 'node = Z_Malloc\(sizeof\(msecnode_t\), PU_LEVEL, NULL\);' 'node = P_NewSecnode();'
+        Replace-EngineSource p_map 'Z_Free\(node\);' @'
+node->m_tnext = free_secnodes;
+        free_secnodes = node;
+'@
+        # Leave more zone space for large maps. Only multi-patch wall
+        # textures use this cache. Keep the same four-way lookup.
+        Replace-EngineSource r_hotpath.iwram 'static byte columnCache\[128\*128\];' 'static byte columnCache[64*128];'
+        Replace-EngineSource r_hotpath.iwram '#define CACHE_STRIDE \(128 / CACHE_WAYS\)' '#define CACHE_STRIDE (64 / CACHE_WAYS)'
+        Replace-EngineSource r_hotpath.iwram 'while\(i < 128\);' 'while(i < 64);'
+        $replacements += 'p_setup.o', 'p_map.o', 'r_hotpath.iwram.o'
+    }
     if ($packedSetup) {
         $engineFlags += '-include', 'firmware/doom-swd/setup_wad.h'
         $pattern = '(?s)(static void P_Load(?:Subsectors|Sectors|Things|SideDefs2)\s*\(int lump\)\s*\{[^}]*?)W_CacheLumpNum'
@@ -116,6 +215,16 @@ char key[8] = {0};
         '-DUSE_USB_HS', '-DUSE_EMBEDDED_PHY', '-DHXTAL_VALUE=8000000U') + $includes
     if ($UsbGame) { $platformFlags += '-DFIXFINDER_USB_GAME', '-DFIXFINDER_USB_VIDEO' }
     $boardObjects = @()
+    if ($externalMaps) {
+        $platformFlags += '-DFIXFINDER_EXTERNAL_DOOM_MAPS'
+        $episode = Join-Path $build 'episode_maps.o'
+        $fmc = Join-Path $build 'fmc.o'
+        Invoke-Gcc ($platformFlags + @('-std=gnu23', "-I$engineIncludes", '-c',
+            'firmware/doom-swd/episode_maps.c', '-o', $episode))
+        Invoke-Gcc ($platformFlags + @('-c',
+            "$sdk/GD32F4xx_standard_peripheral/Source/gd32f4xx_fmc.c", '-o', $fmc))
+        $boardObjects += $episode, $fmc
+    }
     if ($FixFinderLcd) {
         $platformFlags += '-DFIXFINDER_DOOM_DCS'
         $lcd = Join-Path $build 'doom_dcs.o'
@@ -144,6 +253,22 @@ char key[8] = {0};
         }
         if ($EmmcLibrary) {
             $platformFlags += '-DFIXFINDER_EMMC_LIBRARY'
+            if ($ProvisionDoomMaps) {
+                $platformFlags += '-DFIXFINDER_PROVISION_DOOM_MAPS'
+                $mapSource = Join-Path $build 'map-pack.S'
+                $mapObject = Join-Path $build 'map-pack.o'
+                $mapPath = $ProvisionDoomMaps.Replace('\', '/')
+                @"
+.section .rodata.fixfinder_maps,"a",%progbits
+.global fixfinder_maps_start
+.global fixfinder_maps_end
+fixfinder_maps_start:
+.incbin "$mapPath"
+fixfinder_maps_end:
+"@ | Set-Content -LiteralPath $mapSource -Encoding ascii
+                Invoke-Gcc @('-c', $mapSource, '-o', $mapObject)
+                $boardObjects += $mapObject
+            }
             if ($ProvisionLibrary) {
                 $platformFlags += '-DFIXFINDER_PROVISION_LIBRARY'
                 $packSource = Join-Path $build 'library-pack.S'
@@ -236,6 +361,7 @@ doom_iwad_len:
     $objects += $replacements | ForEach-Object { Join-Path $build $_ }
     if ($packedSetup) { $objects += Join-Path $build 'setup_wad.o' }
     $layout = @()
+    if ($externalMaps) { $layout += '-Wl,--defsym,__fixfinder_map_slot=0x082c0000' }
     if ($UsbGame) {
         $gameHid = Join-Path $build 'game-hid.o'
         $video = Join-Path $build 'usb-video.o'

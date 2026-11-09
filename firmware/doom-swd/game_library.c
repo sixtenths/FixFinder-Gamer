@@ -33,7 +33,7 @@ static bool read_exact(FIL *f, void *buffer, unsigned int size)
     return f_read(f,buffer,size,&got)==FR_OK && got==size;
 }
 
-#if defined(FIXFINDER_PROVISION_LIBRARY) || defined(FIXFINDER_PACMAN_SEED)
+#if defined(FIXFINDER_PROVISION_LIBRARY) || defined(FIXFINDER_PACMAN_SEED) || defined(FIXFINDER_PROVISION_DOOM_MAPS)
 #ifdef FIXFINDER_PROVISION_LIBRARY
 extern const uint8_t fixfinder_pack_start[],fixfinder_pack_end[];
 #endif
@@ -64,6 +64,22 @@ done:
 }
 #endif
 
+#ifdef FIXFINDER_PROVISION_DOOM_MAPS
+volatile uint32_t doom_map_install_status;
+
+static void provision_doom_maps(void)
+{
+    extern const uint8_t fixfinder_maps_start[], fixfinder_maps_end[];
+    const unsigned int size = (uintptr_t)fixfinder_maps_end - (uintptr_t)fixfinder_maps_start;
+    doom_map_install_status = 1;
+    if (provision("0:/FFDOOM1.TMP", "0:/FFDOOM1.PAK", fixfinder_maps_start, size)) {
+        doom_map_install_status = 2;
+    } else {
+        doom_map_install_status = 3;
+    }
+}
+#endif
+
 unsigned int fixfinder_library_init(void)
 {
     count=0;
@@ -72,6 +88,9 @@ unsigned int fixfinder_library_init(void)
         fixfinder_library_status(0x100u+rc,0);
         return 0;
     }
+#ifdef FIXFINDER_PROVISION_DOOM_MAPS
+    provision_doom_maps();
+#endif
     FIL f;
     rc=f_open(&f,file_name,FA_READ);
 #ifdef FIXFINDER_PROVISION_LIBRARY

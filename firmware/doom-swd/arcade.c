@@ -2,6 +2,9 @@
 #ifdef FIXFINDER_EMMC_LIBRARY
 #include "game_library.h"
 #endif
+#ifdef FIXFINDER_EXTERNAL_DOOM_MAPS
+#include "episode_maps.h"
+#endif
 #include "display.h"
 #include "dino.h"
 #include "racer.h"
@@ -25,7 +28,7 @@ static const uint8_t base_palette[768] = {
     [PINK*3] = 235, 115, 184, [PANEL*3] = 29, 34, 46,
     [EDGE*3] = 62, 70, 85, [INSET*3] = 20, 23, 32,
 };
-static uint8_t palette[sizeof base_palette] __attribute__((section(".arcade_art")));
+static uint8_t palette[sizeof base_palette] __attribute__((section(".arcade_visual")));
 
 struct ui_glyph {
     uint16_t offset;
@@ -43,10 +46,10 @@ struct ui_label {
     int x, y;
     char text[40];
 };
-static struct ui_label labels[8] __attribute__((section(".arcade_art")));
+static struct ui_label labels[8] __attribute__((section(".arcade_visual")));
 static unsigned int label_count;
 static bool branding;
-static uint8_t wordmark[LOGO_WIDTH*LOGO_HEIGHT/2] __attribute__((section(".arcade_art")));
+static uint8_t wordmark[LOGO_WIDTH*LOGO_HEIGHT/2] __attribute__((section(".arcade_visual")));
 
 static const struct {
     const char *name;
@@ -54,7 +57,11 @@ static const struct {
     const char *hint;
     uint8_t color;
 } games[] = {
+#ifdef FIXFINDER_EXTERNAL_DOOM_MAPS
+    [DOOM] = {"DOOM", "ACTION", "KNEE-DEEP IN THE DEAD", RED},
+#else
     [DOOM] = {"DOOM", "ACTION", "E1M1 HANGAR", RED},
+#endif
     [SNAKE] = {"SNAKE", "SURVIVAL", "FOUR KEYS STEER", GREEN},
 #ifdef FIXFINDER_PACMAN
     [MAZE] = {"PAC MAN", "MIDWAY 1980", "ERASE AND ENTER TO START", YELLOW},
@@ -168,14 +175,14 @@ static void native_row(const uint8_t *frame, unsigned int y, uint8_t *row)
 
 static const uint8_t *usb_native_row(const void *frame, unsigned int y)
 {
-    static uint8_t row[DOOM_LCD_WIDTH] __attribute__((section(".arcade_art")));
+    static uint8_t row[DOOM_LCD_WIDTH] __attribute__((section(".arcade_visual")));
     native_row(frame, y, row);
     return row;
 }
 
 static const uint8_t *preview_row(const void *frame, unsigned int y)
 {
-    static uint8_t preview[W] __attribute__((section(".arcade_art")));
+    static uint8_t preview[W] __attribute__((section(".arcade_visual")));
     const uint8_t *row = usb_native_row(frame, y * DOOM_LCD_HEIGHT / H);
     for (unsigned int x = 0; x < W; ++x)
         preview[x] = row[x * DOOM_LCD_WIDTH / W];
@@ -523,7 +530,7 @@ static void unpack_art(uint8_t *dst, unsigned int size, const uint8_t *src)
     }
 }
 
-static uint8_t doom_art[DOOM_LOGO_WIDTH*DOOM_LOGO_HEIGHT/2] __attribute__((section(".arcade_art")));
+static uint8_t doom_art[DOOM_LOGO_WIDTH*DOOM_LOGO_HEIGHT/2] __attribute__((section(".arcade_visual")));
 
 static void art(uint8_t *frame, int x, int y, int w, int h,
                 int src_w, int src_h, const uint8_t *packed, uint8_t first,
@@ -752,7 +759,22 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                 splash(frame,clock,selected);
                 release_lcd_shadow();
                 switch (selected) {
-                case DOOM: return;
+                case DOOM:
+#if defined(FIXFINDER_EXTERNAL_DOOM_MAPS) || defined(FIXFINDER_PROVISION_DOOM_MAPS)
+#ifdef FIXFINDER_EXTERNAL_DOOM_MAPS
+                    if (doom_maps_available()) return;
+                    const char *message = "DOOM map pack missing";
+#else
+                    const char *message = "Install DOOM episode firmware";
+#endif
+                    fixfinder_set_led(FIXFINDER_LED_RED);
+                    text(120, 125, message, &ui_small, RED, PANEL, true);
+                    present(frame);
+                    wait_until(clock,*clock+1500);
+                    break;
+#else
+                    return;
+#endif
                 case SNAKE: snake(frame,clock); break;
                 case MAZE:
 #ifdef FIXFINDER_PACMAN

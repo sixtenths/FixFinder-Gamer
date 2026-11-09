@@ -2,7 +2,7 @@ ENTRY(Reset_Handler)
 
 MEMORY {
     FLASH (rx) : ORIGIN = DEFINED(__fixfinder_app_base) ? __fixfinder_app_base : 0x08000000,
-                 LENGTH = 0x08300000 - ORIGIN(FLASH)
+                 LENGTH = (DEFINED(__fixfinder_map_slot) ? __fixfinder_map_slot : 0x08300000) - ORIGIN(FLASH)
     RAM (rwx)  : ORIGIN = 0x20000000, LENGTH = 192K
     TCM (rw)   : ORIGIN = 0x10000000, LENGTH = 64K
 }
@@ -34,6 +34,13 @@ SECTIONS {
     .doom_setup (NOLOAD) : { *(.doom_setup) } > TCM
     .doom_video (NOLOAD) : { *(.doom_video) } > TCM
     .arcade_art (NOLOAD) : { *(.arcade_art) } > TCM
+    .arcade_visual (NOLOAD) : {
+        . = ALIGN(8);
+        __doom_line_scratch = .;
+        *(.arcade_visual)
+        . = DEFINED(__fixfinder_map_slot) ? MAX(., __doom_line_scratch + 12K) : .;
+        __doom_line_scratch_end = .;
+    } > TCM
 }
 
 ASSERT((_sidata & 3) == 0, "Startup requires aligned data")

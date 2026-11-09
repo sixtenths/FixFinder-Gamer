@@ -52,7 +52,7 @@ try {
         "$usb/driver/Source/drv_usbd_int.c", "$usb/device/core/Source/usbd_core.c",
         "$usb/device/core/Source/usbd_enum.c", "$usb/device/core/Source/usbd_transc.c",
         "$v8/custom_hid_core.c",
-        "$device/Source/GCC/startup_gd32f407_427.S", 'USB-Build/crt_stubs.c'
+        "$device/Source/GCC/startup_gd32f407_427.S", 'archive/USB-Build/crt_stubs.c'
     )
 
     $arch = @('-mcpu=cortex-m4', '-mthumb')

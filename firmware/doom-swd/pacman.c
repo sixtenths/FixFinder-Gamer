@@ -28,8 +28,8 @@ static struct {
     uint8_t in0, in1, vector, sound[32];
     bool irq, flip, sound_enabled;
     uint64_t dirty_columns;
-} board __attribute__((section(".arcade_art")));
-static uint8_t rgb[768] __attribute__((section(".arcade_art")));
+} board __attribute__((section(".arcade_visual")));
+static uint8_t rgb[768] __attribute__((section(".arcade_visual")));
 
 static uint8_t bus_read(void *state, uint16_t addr)
 {
