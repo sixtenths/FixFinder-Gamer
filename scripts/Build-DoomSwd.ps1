@@ -122,7 +122,7 @@ char key[8] = {0};
     $app = Join-Path $build 'app.o'
     $runtime = Join-Path $build 'runtime.o'
     $display = Join-Path $build 'display.o'
-    if ($UsbGame) { $platformFlags += '-DFIXFINDER_USB_GAME' }
+    if ($UsbGame) { $platformFlags += '-DFIXFINDER_USB_GAME', '-DFIXFINDER_USB_VIDEO' }
     Invoke-Gcc ($platformFlags + @('-DFIXFINDER_DOOM_SWD', '-c', 'USB-Build-V8/app.c', '-o', $app))
     Invoke-Gcc ($platformFlags + @('-std=gnu23', "-I$engineIncludes", '-c',
         'firmware/doom-swd/runtime.c', '-o', $runtime))
@@ -157,10 +157,12 @@ doom_iwad_len:
     $layout = @()
     if ($UsbGame) {
         $gameHid = Join-Path $build 'game-hid.o'
+        $video = Join-Path $build 'usb-video.o'
         Invoke-Gcc ($platformFlags + @('-c',
             'USB-Build-V8/custom_hid_core.c', '-o', $gameHid))
+        Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/usb_video.c', '-o', $video))
         $objects = @($objects | Where-Object { (Split-Path -Leaf $_) -ne 'part_22.o' })
-        $objects += $gameHid
+        $objects += $gameHid, $video
         $layout += '-Wl,--defsym,__fixfinder_app_base=0x08008000'
     }
 

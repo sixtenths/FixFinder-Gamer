@@ -119,11 +119,11 @@ Use a sector download as shown. If the loader has no valid game yet, the display
 
 ## Install or replace the game over USB
 
-Connect the scanner to Windows with a USB data cable. Find its HID serial in PowerShell. The serial is the last part of the `USB\VID_28E9&PID_028B\…` or `USB\VID_28E9&PID_028C\…` instance ID.
+Connect the scanner to Windows with a USB data cable. Find its HID serial in PowerShell. The serial is the last part of the instance ID. The loader uses PID `028B`, older games use `028C`, and DOOM with USB video uses `028D`.
 
 ```powershell
 Get-PnpDevice -PresentOnly |
-    Where-Object InstanceId -Match '^USB\\VID_28E9&PID_028[BC]\\' |
+    Where-Object InstanceId -Match '^USB\\VID_28E9&PID_028[BCD]\\' |
     Select-Object Status,InstanceId
 
 $serial = 'YOUR_SCANNER_SERIAL'
@@ -145,6 +145,14 @@ Wait for the CRC verification and game launch. One game fits in the slot at a ti
 For hardware notes and recovery references, see [LCD bring-up](LCD.md), [the status log](STATUS.md), and [V8 recovery](../README.md#raspberry-pi).
 
 ## Preview the game on a PC
+
+Install the latest DOOM build with `-UsbGame` and keep the scanner connected to Windows through USB. Run the viewer with Python and Tkinter, using the serial shown above. The preview uses 120 × 80 pixels and keeps playing on the scanner while the window is open.
+
+```powershell
+python -B scripts/View-FixFinderUsb.py --serial $serial
+```
+
+### Preview through the Pi
 
 Leave the Pi debug leads connected and use the ELF for the exact game build installed on the scanner. Run `arm-none-eabi-nm -S FixFinder-Doom-LCD-USB.elf` and find the addresses of `doom_frame` and `palette`. The frame is 38,400 bytes and the palette is 512 bytes.
 

@@ -47,7 +47,16 @@ OF SUCH DAMAGE.
 #define USBD_PID                     0x028BU
 #elif defined(FIXFINDER_USB_GAME)
 #include "../firmware/usb-loader/protocol.h"
+#ifdef FIXFINDER_USB_VIDEO
+#include "../firmware/doom-swd/usb_video.h"
+#undef DESC_LEN_REPORT
+#define DESC_LEN_REPORT              31U
+#undef CUSTOMHID_IN_PACKET
+#define CUSTOMHID_IN_PACKET          VIDEO_REPORT_SIZE
+#define USBD_PID                     0x028DU
+#else
 #define USBD_PID                     0x028CU
+#endif
 #else
 #define USBD_PID                     0x028AU
 #endif
@@ -131,7 +140,7 @@ __ALIGN_BEGIN const usb_hid_desc_config_set custom_hid_config_desc __ALIGN_END =
         .bEndpointAddress     = CUSTOMHID_IN_EP,
         .bmAttributes         = USB_EP_ATTR_INT,
         .wMaxPacketSize       = CUSTOMHID_IN_PACKET,
-#ifdef FIXFINDER_USB_LOADER
+#if defined(FIXFINDER_USB_LOADER) || defined(FIXFINDER_USB_VIDEO)
         .bInterval            = 1U
 #else
         .bInterval            = 0x20U
@@ -148,7 +157,7 @@ __ALIGN_BEGIN const usb_hid_desc_config_set custom_hid_config_desc __ALIGN_END =
         .bEndpointAddress     = CUSTOMHID_OUT_EP,
         .bmAttributes         = USB_EP_ATTR_INT,
         .wMaxPacketSize       = CUSTOMHID_OUT_PACKET,
-#ifdef FIXFINDER_USB_LOADER
+#if defined(FIXFINDER_USB_LOADER) || defined(FIXFINDER_USB_VIDEO)
         .bInterval            = 1U
 #else
         .bInterval            = 0x20U
@@ -221,6 +230,12 @@ __ALIGN_BEGIN const uint8_t customhid_report_descriptor[DESC_LEN_REPORT] __ALIGN
     0x85, LOADER_REPORT_ID, 0x15, 0x00, 0x26, 0xff, 0x00,
     0x75, 0x08, 0x95, LOADER_REPORT_SIZE - 1,
     0x09, 0x02, 0x91, 0x02, 0x09, 0x03, 0x81, 0x02, 0xc0
+#elif defined(FIXFINDER_USB_VIDEO)
+    0x06, 0x00, 0xff, 0x09, 0x01, 0xa1, 0x01,
+    0x85, 0x14, 0x15, 0x00, 0x26, 0xff, 0x00,
+    0x75, 0x08, 0x95, 0x01, 0x09, 0x02, 0x91, 0x02,
+    0x85, VIDEO_REPORT_ID, 0x95, VIDEO_REPORT_SIZE - 1,
+    0x09, 0x03, 0x81, 0x02, 0xc0
 #else
     0x06U, 0x00U, 0xFFU, /* USAGE_PAGE (Vendor Defined: 0xFF00) */
     0x09U, 0x00U,        /* USAGE (Custom Device)               */
@@ -354,6 +369,9 @@ static uint8_t custom_hid_init(usb_dev *udev, uint8_t config_index)
     static __ALIGN_BEGIN custom_hid_handler hid_handler __ALIGN_END;
 
     memset((void *)&hid_handler, 0U, sizeof(custom_hid_handler));
+#ifdef FIXFINDER_USB_VIDEO
+    doom_usb_video_reset();
+#endif
 
     /* initialize the data TX endpoint */
     usbd_ep_setup(udev, &(custom_hid_config_desc.hid_epin));
@@ -390,6 +408,9 @@ static uint8_t custom_hid_init(usb_dev *udev, uint8_t config_index)
 */
 static uint8_t custom_hid_deinit(usb_dev *udev, uint8_t config_index)
 {
+#ifdef FIXFINDER_USB_VIDEO
+    doom_usb_video_reset();
+#endif
     /* deinitialize HID endpoints */
     usbd_ep_clear(udev, CUSTOMHID_IN_EP);
     usbd_ep_clear(udev, CUSTOMHID_OUT_EP);
@@ -461,6 +482,8 @@ static uint8_t custom_hid_data_in(usb_dev *udev, uint8_t ep_num)
 {
 #ifdef FIXFINDER_USB_LOADER
     loader_usb_sent();
+#elif defined(FIXFINDER_USB_VIDEO)
+    doom_usb_video_sent(udev);
 #endif
     return USBD_OK;
 }
@@ -485,6 +508,12 @@ static uint8_t custom_hid_data_out(usb_dev *udev, uint8_t ep_num)
         BOOT_COOKIE[0] = BOOT_LOADER;
         BOOT_COOKIE[1] = ~BOOT_LOADER;
         NVIC_SystemReset();
+    }
+#endif
+#ifdef FIXFINDER_USB_VIDEO
+    if (udev->dev.transc_out[ep_num].xfer_count == 2U &&
+        hid->data[0] == 0x14U && hid->data[1] == VIDEO_REQUEST) {
+        doom_usb_video_request();
     }
 #endif
     /* Ignore output reports and rearm the OUT endpoint. */

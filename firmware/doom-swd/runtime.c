@@ -7,6 +7,9 @@
 #include <time.h>
 
 #include "gd32f4xx.h"
+#ifdef FIXFINDER_USB_VIDEO
+#include "usb_video.h"
+#endif
 #include "doomdef.h"
 #include "d_event.h"
 #include "d_main.h"
@@ -163,6 +166,9 @@ void I_FinishUpdate_e32(const byte *frame, const byte *palette,
     doom_dcs_present(frame);
 #else
     doom_display_present(frame);
+#endif
+#ifdef FIXFINDER_USB_VIDEO
+    doom_usb_video_capture(frame, palette);
 #endif
     doom_frame_hash = frame_hash;
     if (_g->gamestate == GS_LEVEL && _g->player.mo != NULL) {

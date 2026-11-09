@@ -11,6 +11,7 @@ import zlib
 VID = 0x28E9
 LOADER_PID = 0x028B
 GAME_PID = 0x028C
+VIDEO_GAME_PID = 0x028D
 REPORT_ID = 0x41
 REPORT_SIZE = 64
 CHUNK = 56
@@ -80,7 +81,7 @@ def connect(hid, serial, wait):
             except OSError:
                 pass
         if not requested_reset:
-            path = find_device(hid, GAME_PID, serial)
+            path = find_device(hid, VIDEO_GAME_PID, serial) or find_device(hid, GAME_PID, serial)
             if path is not None:
                 try:
                     device = hid.Device(path)
