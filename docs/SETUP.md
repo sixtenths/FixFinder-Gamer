@@ -135,7 +135,7 @@ Wait for the CRC verification and game launch. The slot holds one installable im
 
 ## Build and use HackerZone Arcade
 
-Add `-Arcade` to the DOOM build command with `-FixFinderLcd -CompactReciprocal -UsbGame`, then install the resulting game BIN over USB. This bundles six games in the same flash slot. The selector opens after the resident loader, and each selection shows its own title screen. Use **Erase** and **Down** to select a game and **Enter** to launch it. Hold **Down + Back** for one second to return to the selector.
+Add `-Arcade` to the DOOM build command with `-FixFinderLcd -CompactReciprocal -UsbGame`, then install the resulting game BIN over USB. This bundles seven games in the same flash slot. The selector opens after the resident loader, and each selection shows its own title screen. Use **Erase** and **Down** to select a game and **Enter** to launch it. Hold **Down + Back** for one second to return to the selector.
 
 | Game | Controls |
 | --- | --- |
@@ -145,6 +145,7 @@ Add `-Arcade` to the DOOM build command with `-FixFinderLcd -CompactReciprocal -
 | Pong | Use Erase and Down to move your paddle. Play against the scanner. |
 | Breakout | Move the paddle with Back and Enter. Clear the bricks before you lose three balls. |
 | Neon Circuit | Steer with Back / Enter, boost with Erase, and brake with Down. From the USB viewer, use Left / Right or A / D to steer, Up, W, or Space to boost, and Down / S to brake. Pass the traffic and reach the finish before the timer runs out. |
+| Dino Run | Tap any scanner button or press **Space** in the viewer to jump. Clear the cacti as the runner picks up speed. |
 
 The default build includes Maze Chase, a Pac-Man-style game with an original maze. To replace it with **the 1980 Midway arcade Pac-Man**, add `-PacmanRom` to the build with your local MAME ROM archives. A complete set works by itself; a split set needs the parent archive for the color PROMs:
 
@@ -169,11 +170,12 @@ The LEDs are off in the selector and yellow while a game loads. During play they
 | Pong | Tied, ahead, or won | Opponent is ahead | Lost the match |
 | Breakout | Three balls or won | Two balls | Last ball or game over |
 | Neon Circuit | Racing or finished | Off road or under seven seconds left | Collision or time expired |
+| Dino Run | Running | Loading | Game over |
 | eMMC bonus games | Running | Game sound or waiting for a key | Program stopped |
 
 Add `-PacmanFromEmmc` to load Pac-Man from `PACMAN.ROM` on that same volume. For the first install on scanner 1, combine it with `-PacmanRom $pacman` so the firmware can create and verify the file. Subsequent builds can omit `-PacmanRom` and load the existing file into RAM when Pac-Man starts.
 
-The starter pack uses five games from the [CC0 CHIP-8 Archive](https://github.com/JohnEarnest/chip8Archive/tree/761e3ffc63f43e6a849e80714122feff2afca208), played through [C-Octo](https://github.com/JohnEarnest/c-octo/tree/102994e6166236045a067efa930a88532510e03e). Existing six-game packs still load. The selector skips the old Dino Run entry and shows Neon Circuit in its place.
+The starter pack uses six games from the [CC0 CHIP-8 Archive](https://github.com/JohnEarnest/chip8Archive/tree/761e3ffc63f43e6a849e80714122feff2afca208), played through [C-Octo](https://github.com/JohnEarnest/c-octo/tree/102994e6166236045a067efa930a88532510e03e). André Moreira’s original Dino Run appears as **Dino Run Classic**. The native remake and Neon Circuit have separate entries.
 
 ```powershell
 git clone https://github.com/JohnEarnest/chip8Archive.git build/chip8Archive
@@ -185,7 +187,7 @@ The experimental provision build takes `-ProvisionLibrary build/fixfinder-librar
 
 | Bonus game | Controls |
 | --- | --- |
-| Dino Run | Press any face button to jump. |
+| Dino Run Classic | Press any face button or **Space** to jump. |
 | Flight Runner and Danm8ku | Erase, Down, Back, and Enter steer up, down, left, and right. |
 | Down 8 | Back and Enter move left and right; Erase jumps. |
 | Tick | Press a face button to hit the beat. |
@@ -208,7 +210,7 @@ For hardware notes and recovery references, see [LCD bring-up](LCD.md), [the sta
 
 ## Preview the game on a PC
 
-Install the latest DOOM build with `-UsbGame` and keep the scanner connected to Windows through USB. Run the viewer with Python and Tkinter, using the serial shown above. The default mode streams the full 320 × 240 LCD raster with its RGB palette. Use `--scale 3` for a larger window with sharp pixel edges, `--source` for the lighter 240 × 160 game preview, or `--fast` for the 120 × 80 preview. Older firmware falls back to 240 × 160. The USB stream is assembled from strips, so movement can show a seam between strips.
+Install the latest DOOM build with `-UsbGame` and keep the scanner connected to Windows through USB. Run the viewer with Python and Tkinter, using the serial shown above. The default mode streams the full 320 × 240 LCD raster with its RGB palette and compresses suitable strips without losing pixels. Use `--scale 3` for a larger window with sharp pixel edges, `--source` for the lighter 240 × 160 game preview, or `--fast` for the 120 × 80 preview. Older firmware uses its supported uncompressed mode. The USB stream is assembled from strips, so movement can show a seam between strips.
 
 ```powershell
 python -B scripts/View-FixFinderUsb.py --serial $serial

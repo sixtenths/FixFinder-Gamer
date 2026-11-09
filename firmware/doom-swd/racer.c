@@ -275,7 +275,7 @@ enum race_result fixfinder_race(const volatile uint32_t *clock)
                               FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
             draw(image,&state,elapsed,first);
             first=false;
-            render=now+40;
+            render=now+32;
         }
     }
     free(image);

@@ -200,7 +200,9 @@ pacman_rom:
         Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/arcade.c', '-o', $arcadeObject))
         $racerObject = Join-Path $build 'racer.o'
         Invoke-Gcc ($platformFlags + @('-O2', '-c', 'firmware/doom-swd/racer.c', '-o', $racerObject))
-        $boardObjects += $arcadeObject, $racerObject
+        $dinoObject = Join-Path $build 'dino.o'
+        Invoke-Gcc ($platformFlags + @('-O2', '-c', 'firmware/doom-swd/dino.c', '-o', $dinoObject))
+        $boardObjects += $arcadeObject, $racerObject, $dinoObject
     }
     Invoke-Gcc ($platformFlags + @('-DFIXFINDER_DOOM_SWD', '-c', 'USB-Build-V8/app.c', '-o', $app))
     Invoke-Gcc ($platformFlags + @('-std=gnu23', "-I$engineIncludes", '-c',

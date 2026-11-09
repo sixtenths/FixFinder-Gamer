@@ -15,6 +15,7 @@ PALETTE_SIZE = 256 * 3
 TRANSFER_SIZE = PALETTE_SIZE + FAST_WIDTH * FAST_HEIGHT
 REPORT_SIZE = 64
 PAYLOAD_SIZE = REPORT_SIZE - 3
+PACKED_BANDS = range(0xD1, 0xD9)
 
 ARCADE_KEYS = {
     "left": 1, "a": 1, "down": 2, "s": 2, "right": 4, "d": 4,
@@ -86,6 +87,11 @@ def read_transfer(device, command, timeout=4, service=None):
             data.clear()
             if tagged and report[3] != command:
                 continue
+            if command in PACKED_BANDS:
+                length = int.from_bytes(report[4:6], "little")
+                if not 1 <= length <= FAST_WIDTH * FAST_HEIGHT:
+                    raise ValueError("Invalid packed USB band length.")
+                size = 3 + PALETTE_SIZE + length
         elif not data:
             # A previous viewer may have left part of a frame in flight.
             continue
@@ -95,31 +101,53 @@ def read_transfer(device, command, timeout=4, service=None):
     return bytes(data[1:] if tagged else data)
 
 
-def read_frame(device, fast, native=False, probe=False, service=None):
+def unpack_pixels(payload):
+    if len(payload) == FAST_WIDTH * FAST_HEIGHT:
+        return payload
+    pixels = bytearray()
+    cursor = 0
+    while cursor < len(payload):
+        control = payload[cursor]
+        cursor += 1
+        count = (control & 127) + 1
+        size = 1 if control & 128 else count
+        if cursor + size > len(payload) or len(pixels) + count > FAST_WIDTH * FAST_HEIGHT:
+            raise ValueError("Invalid USB pixel run.")
+        pixels.extend(payload[cursor:cursor + size] * (count if control & 128 else 1))
+        cursor += size
+    if len(pixels) != FAST_WIDTH * FAST_HEIGHT:
+        raise ValueError("Incomplete USB pixel band.")
+    return pixels
+
+
+def read_frame(device, fast, native=False, probe=False, service=None, packed=False):
     rgb = bytearray()
-    commands = range(0xC9, 0xD1) if native else ((0xC3,) if fast else range(0xC4, 0xC8))
+    commands = PACKED_BANDS if packed else range(0xC9, 0xD1) if native else ((0xC3,) if fast else range(0xC4, 0xC8))
     for index, command in enumerate(commands):
         part = read_transfer(device, command, timeout=1 if probe and index == 0 else 4, service=service)
+        if packed:
+            part = part[2:]
         palette = [part[i:i + 3] for i in range(0, PALETTE_SIZE, 3)]
-        rgb.extend(b"".join(palette[i] for i in part[PALETTE_SIZE:]))
+        pixels = part[PALETTE_SIZE:]
+        rgb.extend(b"".join(palette[i] for i in (unpack_pixels(pixels) if packed else pixels)))
     return rgb
 
 
 def frames(device, fast, source, service=None):
     if not (fast or source):
-        try:
-            first = read_frame(device, False, native=True, probe=True, service=service)
-        except TimeoutError:
-            source = True
-        else:
+        for packed in (True, False):
+            try:
+                first = read_frame(device, False, native=True, probe=True, service=service, packed=packed)
+            except TimeoutError:
+                continue
             yield LCD_WIDTH, LCD_HEIGHT, first
+            while True:
+                yield LCD_WIDTH, LCD_HEIGHT, read_frame(device, False, native=True, service=service, packed=packed)
     while True:
         if fast:
             yield FAST_WIDTH, FAST_HEIGHT, read_frame(device, True, service=service)
-        elif source:
-            yield WIDTH, HEIGHT, read_frame(device, False, service=service)
         else:
-            yield LCD_WIDTH, LCD_HEIGHT, read_frame(device, False, native=True, service=service)
+            yield WIDTH, HEIGHT, read_frame(device, False, service=service)
 
 
 def view(serial, fast, source, scale):

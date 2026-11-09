@@ -3,6 +3,7 @@
 #include "game_library.h"
 #endif
 #include "display.h"
+#include "dino.h"
 #include "racer.h"
 #include "usb_video.h"
 #include "../lcd/fixfinder_io.h"
@@ -13,7 +14,7 @@
 
 enum color { BG, WHITE, MUTED, ORANGE, GREEN, RED, BLUE, YELLOW, PINK, PANEL,
              EDGE, INSET, BRAND = 16, DOOM_ART = 32, TEXT_PALETTE = 48 };
-enum game_id { DOOM, SNAKE, MAZE, PONG, BREAKOUT, RACER, GAME_COUNT };
+enum game_id { DOOM, SNAKE, MAZE, PONG, BREAKOUT, RACER, DINO, GAME_COUNT };
 enum { W = DOOM_FRAME_WIDTH, H = DOOM_FRAME_HEIGHT };
 
 static const uint8_t base_palette[768] = {
@@ -63,6 +64,7 @@ static const struct {
     [PONG] = {"PONG", "SPORT", "ERASE UP  DOWN DOWN", BLUE},
     [BREAKOUT] = {"BREAKOUT", "PADDLE", "BACK LEFT  ENTER RIGHT", PINK},
     [RACER] = {"NEON CIRCUIT", "RACING", "STEER  BOOST  BRAKE", ORANGE},
+    [DINO] = {"DINO RUN", "RUNNER", "TAP A BUTTON TO JUMP", GREEN},
 };
 
 static const int dx[] = {1, 0, -1, 0};
@@ -180,14 +182,33 @@ static const uint8_t *preview_row(const void *frame, unsigned int y)
     return preview;
 }
 
+static uint8_t *lcd_shadow;
+
+static void release_lcd_shadow(void)
+{
+    free(lcd_shadow);
+    lcd_shadow = NULL;
+}
+
 static void present(uint8_t *frame)
 {
     uint8_t row[DOOM_LCD_WIDTH];
-    doom_display_set_palette(palette);
-    doom_dcs_begin_native();
+    enum { PIXELS = DOOM_LCD_WIDTH * DOOM_LCD_HEIGHT };
+    bool dirty = lcd_shadow && memcmp(lcd_shadow + PIXELS, palette, sizeof palette) == 0;
+    if (!lcd_shadow) lcd_shadow = malloc(PIXELS + sizeof palette);
+    if (!dirty) {
+        doom_display_set_palette(palette);
+        doom_dcs_begin_native();
+        if (lcd_shadow) memcpy(lcd_shadow + PIXELS, palette, sizeof palette);
+    }
     for (unsigned int y = 0; y < DOOM_LCD_HEIGHT; ++y) {
         native_row(frame, y, row);
-        doom_dcs_write_native(y, row);
+        if (dirty) {
+            doom_dcs_update_native_row(y, row, lcd_shadow + y * DOOM_LCD_WIDTH, 0, DOOM_LCD_WIDTH);
+        } else {
+            doom_dcs_write_native(y, row);
+            if (lcd_shadow) memcpy(lcd_shadow + y * DOOM_LCD_WIDTH, row, sizeof row);
+        }
     }
     doom_usb_video_capture_native_rows(usb_native_row, preview_row, frame, palette);
 }
@@ -264,6 +285,7 @@ static void snake(uint8_t *frame, const volatile uint32_t *clock)
         unsigned int length = 3, food = 7*C+16;
         int heading = 0, next = 0;
         uint32_t step = *clock + 190, food_flash = *clock;
+        bool redraw = true;
         won = false;
         for (;;) {
             uint32_t now = *clock, keys = fixfinder_keys(now);
@@ -292,15 +314,21 @@ static void snake(uint8_t *frame, const volatile uint32_t *clock)
                     } while (hit);
                 }
                 step = now + (length < 22 ? 190 - length*5 : 80);
+                redraw = true;
             }
             fixfinder_set_led((int32_t)(food_flash - now) > 0 ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
+            if (!redraw) {
+                doom_usb_video_capture_native_rows(usb_native_row, preview_row, frame, palette);
+                wait_until(clock,now+4);
+                continue;
+            }
             hud(frame, SNAKE, length - 3);
             box(frame, 7, 19, 226, 122, PANEL);
             box(frame, 9+(food%C)*TILE, 21+(food/C)*TILE, 5, 5, RED);
             for (unsigned int i = 0; i < length; ++i)
                 box(frame, 8+(body[i]%C)*TILE, 20+(body[i]/C)*TILE, 7, 7, i ? GREEN : WHITE);
             present(frame);
-            wait_until(clock, now + 32);
+            redraw = false;
         }
     } while (finish(frame, clock, won));
 }
@@ -407,42 +435,44 @@ static int clamp(int value, int lo, int hi)
 
 static void paddle_game(uint8_t *frame, const volatile uint32_t *clock, bool bricks)
 {
+    /* Half-pixel coordinates keep the same movement speed at twice the tick rate. */
+    enum { P = 2 };
     do {
-        int player = 65, opponent = 65, x = 120, y = 85, vx = -3, vy = 2;
+        int player = 65*P, opponent = 65*P, x = 120*P, y = 85*P, vx = -3, vy = 2;
         unsigned int score = 0, other = 0;
         uint16_t rows[4] = {0x3ff,0x3ff,0x3ff,0x3ff};
-        if (bricks) player = 105;
+        if (bricks) player = 105*P;
         while (score < (bricks ? 40U : 5U) && other < (bricks ? 3U : 5U)) {
             uint32_t now = *clock, keys = fixfinder_keys(now);
             if (fixfinder_arcade_exit(keys, now)) return;
             if (bricks) {
                 if (keys == KEY_BACK) player -= 5;
                 if (keys == KEY_ENTER) player += 5;
-                player = clamp(player, 8, 199);
+                player = clamp(player, 8*P, 199*P);
             } else {
                 if (keys == KEY_ERASE) player -= 5;
                 if (keys == KEY_DOWN) player += 5;
-                player = clamp(player, 20, 117);
-                opponent = clamp(opponent + (y < opponent+10 ? -2 : 2), 20, 117);
+                player = clamp(player, 20*P, 117*P);
+                opponent = clamp(opponent + (y < opponent+10*P ? -2 : 2), 20*P, 117*P);
             }
             x += vx; y += vy;
-            if (y <= 20) { y=20; vy=2; }
-            if (!bricks && y >= 137) { y=137; vy=-2; }
+            if (y <= 20*P) { y=20*P; vy=2; }
+            if (!bricks && y >= 137*P) { y=137*P; vy=-2; }
             if (bricks) {
-                if (x <= 8 || x >= 228) { x=clamp(x,8,228); vx=-vx; }
-                if (vy > 0 && y >= 130 && y <= 135 && x+4 >= player && x < player+32) vy=-2;
-                if (y >= 141) { ++other; x=120; y=94; vy=-2; }
-                if (y >= 30 && y < 66 && x >= 19 && x < 219) {
-                    int row=(y-30)/9, col=(x-19)/20;
+                if (x <= 8*P || x >= 228*P) { x=clamp(x,8*P,228*P); vx=-vx; }
+                if (vy > 0 && y >= 130*P && y <= 135*P && x+4*P >= player && x < player+32*P) vy=-2;
+                if (y >= 141*P) { ++other; x=120*P; y=94*P; vy=-2; }
+                if (y >= 30*P && y < 66*P && x >= 19*P && x < 219*P) {
+                    int row=(y-30*P)/(9*P), col=(x-19*P)/(20*P);
                     if (rows[row] & (1U << col)) { rows[row] ^= 1U << col; ++score; vy=-vy; }
                 }
             } else {
-                if (vx<0 && x<=17 && x>=11 && y+4>=player && y<player+23) vx=3;
-                if (vx>0 && x>=219 && x<=225 && y+4>=opponent && y<opponent+23) vx=-3;
-                if (x<6 || x>230) {
-                    if (x<6) ++other; else ++score;
-                    vx = x<6 ? 3 : -3;
-                    x=120; y=80;
+                if (vx<0 && x<=17*P && x>=11*P && y+4*P>=player && y<player+23*P) vx=3;
+                if (vx>0 && x>=219*P && x<=225*P && y+4*P>=opponent && y<opponent+23*P) vx=-3;
+                if (x<6*P || x>230*P) {
+                    if (x<6*P) ++other; else ++score;
+                    vx = x<6*P ? 3 : -3;
+                    x=120*P; y=80*P;
                 }
             }
             fixfinder_set_led(bricks && other >= 2 ? FIXFINDER_LED_RED :
@@ -454,15 +484,15 @@ static void paddle_game(uint8_t *frame, const volatile uint32_t *clock, bool bri
             if (bricks) {
                 for (int row=0; row<4; ++row) for (int col=0; col<10; ++col)
                     if (rows[row] & (1U << col)) box(frame,19+col*20,30+row*9,18,7,RED+row);
-                box(frame,player,134,32,4,WHITE);
+                box(frame,player/P,134,32,4,WHITE);
             } else {
                 for (int i=24;i<137;i+=9) box(frame,119,i,2,5,PANEL);
-                box(frame,12,player,4,23,GREEN);
-                box(frame,224,opponent,4,23,ORANGE);
+                box(frame,12,player/P,4,23,GREEN);
+                box(frame,224,opponent/P,4,23,ORANGE);
             }
-            box(frame,x,y,4,4,WHITE);
+            box(frame,x/P,y/P,4,4,WHITE);
             present(frame);
-            wait_until(clock,now+32);
+            wait_until(clock,now+16);
         }
         if (!finish(frame,clock,score==(bricks?40U:5U))) return;
     } while (true);
@@ -586,6 +616,17 @@ static void illustration(uint8_t *frame, int x, int y, enum game_id game)
         box(frame,x+33,y+39,3,2,RED);
         box(frame,x+43,y+39,3,2,RED);
         break;
+    case DINO:
+        box(frame,x+8,y+38,64,2,ORANGE);
+        box(frame,x+20,y+24,19,11,GREEN);
+        box(frame,x+30,y+16,17,11,GREEN);
+        box(frame,x+39,y+18,2,2,BG);
+        box(frame,x+14,y+24,8,5,GREEN);
+        box(frame,x+24,y+33,4,5,GREEN);
+        box(frame,x+33,y+33,4,5,GREEN);
+        box(frame,x+57,y+25,4,13,YELLOW);
+        box(frame,x+53,y+29,11,3,YELLOW);
+        break;
     default: break;
     }
 }
@@ -697,6 +738,7 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                     text(120, 90, "Loading game", &ui_small, GREEN, PANEL, true);
                     present(frame);
                     wait_until(clock,now+550);
+                    release_lcd_shadow();
                     if (!fixfinder_library_play(selected-GAME_COUNT,frame,clock)) {
                         fixfinder_set_led(FIXFINDER_LED_RED);
                         text(120, 105, "Could not read game", &ui_small, RED, PANEL, true);
@@ -708,6 +750,7 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
 #endif
                 {
                 splash(frame,clock,selected);
+                release_lcd_shadow();
                 switch (selected) {
                 case DOOM: return;
                 case SNAKE: snake(frame,clock); break;
@@ -727,13 +770,24 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                     break;
                 case PONG: paddle_game(frame,clock,false); break;
                 case BREAKOUT: paddle_game(frame,clock,true); break;
+                case DINO: {
+                    unsigned int score;
+                    while (fixfinder_dino_run(clock,&score)) {
+                        hud(frame,DINO,score);
+                        if (!finish(frame,clock,false)) break;
+                        release_lcd_shadow();
+                    }
+                    break;
+                }
                 case RACER: {
                     enum race_result result;
                     do {
                         result=fixfinder_race(clock);
                         if (result==RACE_EXIT) break;
                         hud(frame,RACER,0);
-                    } while (finish(frame,clock,result==RACE_FINISHED));
+                        if (!finish(frame,clock,result==RACE_FINISHED)) break;
+                        release_lcd_shadow();
+                    } while (true);
                     break;
                 }
                 }

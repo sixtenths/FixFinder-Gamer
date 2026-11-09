@@ -10,6 +10,7 @@
 #define VIDEO_BANDS 4U
 #define VIDEO_LCD_FIRST_BAND 0xc9U
 #define VIDEO_LCD_BANDS 8U
+#define VIDEO_PACKED_FIRST_BAND 0xd1U
 
 void doom_usb_video_reset(void);
 void doom_usb_video_request(uint8_t command);

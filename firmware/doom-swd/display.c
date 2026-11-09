@@ -4,11 +4,16 @@ static uint16_t palette[256];
 /* Kept in AHB SRAM so a display backend can transfer the row with DMA. */
 static uint16_t scanline[DOOM_LCD_WIDTH] __attribute__((aligned(4)));
 
-const uint16_t *doom_display_native_row(const uint8_t *indices)
+const uint16_t *doom_display_native_pixels(const uint8_t *indices, unsigned int count)
 {
-    for (unsigned int x = 0; x < DOOM_LCD_WIDTH; ++x)
+    for (unsigned int x = 0; x < count; ++x)
         scanline[x] = palette[indices[x]];
     return scanline;
+}
+
+const uint16_t *doom_display_native_row(const uint8_t *indices)
+{
+    return doom_display_native_pixels(indices, DOOM_LCD_WIDTH);
 }
 
 void doom_display_set_palette(const uint8_t *rgb)

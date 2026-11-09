@@ -99,15 +99,15 @@ unsigned int fixfinder_library_init(void)
         end=e->offset+e->length;
     }
     f_close(&f);
-    if (ok) for (unsigned int i=0;i<header.count;++i)
-        if (strcmp(list[i].title,"DINO RUN")!=0) list[count++]=list[i];
+    if (ok) count=header.count;
     fixfinder_library_status(ok?1u:0x300u,count);
     return count;
 }
 
 const char *fixfinder_library_title(unsigned int index)
 {
-    return index<count?list[index].title:"";
+    if (index>=count) return "";
+    return strcmp(list[index].title,"DINO RUN")==0?"DINO RUN CLASSIC":list[index].title;
 }
 
 static uint32_t crc32(const uint8_t *p,unsigned int n)
@@ -166,6 +166,8 @@ bool fixfinder_library_play(unsigned int index,uint8_t *frame,const volatile uin
     octo_emulator_init(vm,(char *)rom,e->length,&opts,NULL);
     static const uint8_t rgb[768]={8,13,22, 146,241,163, 237,101,99, 255,219,115};
     doom_display_set_palette(rgb);
+    uint8_t *last_pixels=malloc(sizeof vm->px);
+    bool first_draw=true, last_hires=false;
     uint32_t sound_flash=*clock;
     uint32_t previous=15, deadline=*clock;
     unsigned int ticks=0;
@@ -203,15 +205,19 @@ bool fixfinder_library_play(unsigned int index,uint8_t *frame,const volatile uin
         }
         fixfinder_set_led(vm->wait || (int32_t)(sound_flash-now)>0 ?
                           FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
-        if (!(ticks&1u)) {
+        if (first_draw || (!(ticks&1u) &&
+            (!last_pixels || last_hires!=vm->hires || memcmp(last_pixels,vm->px,sizeof vm->px)))) {
             memset(frame,0,W*H);
             unsigned int w=vm->hires?128:64, h=vm->hires?64:32;
             for (unsigned int y=0;y<104;++y)
                 for (unsigned int x=0;x<208;++x)
                     frame[(y+28)*W+x+16]=vm->px[(y*h/104)*w+x*w/208];
             doom_dcs_present(frame);
-            doom_usb_video_capture(frame,rgb);
+            if (last_pixels) memcpy(last_pixels,vm->px,sizeof vm->px);
+            first_draw=false;
+            last_hires=vm->hires;
         }
+        doom_usb_video_capture(frame,rgb);
         deadline+=ticks++%3==0?16:17;
         if ((int32_t)(*clock-deadline)>50) deadline=*clock;
         while ((int32_t)(*clock-deadline)<0) {}
@@ -221,6 +227,7 @@ bool fixfinder_library_play(unsigned int index,uint8_t *frame,const volatile uin
         uint32_t stopped=*clock;
         while (*clock-stopped<300) doom_usb_video_capture(frame,rgb);
     }
+    free(last_pixels);
     free(vm);
     return true;
 }

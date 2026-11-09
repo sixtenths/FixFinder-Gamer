@@ -11,6 +11,7 @@
 #define PAYLOAD_SIZE (VIDEO_REPORT_SIZE - 3U)
 #define BAND_ROWS (DOOM_FRAME_HEIGHT / VIDEO_BANDS)
 #define LCD_BAND_ROWS (DOOM_LCD_HEIGHT / VIDEO_LCD_BANDS)
+#define PACKED_CAPACITY 4096U
 
 _Static_assert(DOOM_LCD_WIDTH * LCD_BAND_ROWS == HALF_SIZE * 2U && !(LCD_BAND_ROWS % 2),
                "LCD band must fill both snapshot buffers");
@@ -22,21 +23,35 @@ extern usb_core_driver custom_hid;
 static uint8_t top[HALF_SIZE];
 static uint8_t bottom[HALF_SIZE] __attribute__((section(".doom_video")));
 static uint8_t colors[PALETTE_SIZE];
+static uint8_t packed[PACKED_CAPACITY] __attribute__((section(".doom_video")));
 static uint8_t report[VIDEO_REPORT_SIZE] __attribute__((aligned(4)));
 static volatile enum { IDLE, REQUESTED, CAPTURING, SENDING } state;
 static volatile uint8_t requested_command;
 static uint8_t active_command;
 static uint8_t next_command;
 static uint16_t offset;
+static unsigned int packed_size;
 static volatile bool native_capture;
+
+static bool is_packed_band(uint8_t command)
+{
+    return command >= VIDEO_PACKED_FIRST_BAND && command < VIDEO_PACKED_FIRST_BAND + VIDEO_LCD_BANDS;
+}
 
 static bool is_lcd_band(uint8_t command)
 {
-    return command >= VIDEO_LCD_FIRST_BAND && command < VIDEO_LCD_FIRST_BAND + VIDEO_LCD_BANDS;
+    return (command >= VIDEO_LCD_FIRST_BAND && command < VIDEO_LCD_FIRST_BAND + VIDEO_LCD_BANDS) ||
+           is_packed_band(command);
+}
+
+static unsigned int first_lcd_row(uint8_t command)
+{
+    return (command - (is_packed_band(command) ? VIDEO_PACKED_FIRST_BAND : VIDEO_LCD_FIRST_BAND)) * LCD_BAND_ROWS;
 }
 
 static unsigned int transfer_size(void)
 {
+    if (is_packed_band(active_command)) return 3 + PALETTE_SIZE + packed_size;
     return FRAME_SIZE + (active_command != VIDEO_REQUEST);
 }
 
@@ -78,6 +93,18 @@ static void send_chunk(usb_dev *device)
                 continue;
             }
             --index;
+        }
+        if (is_packed_band(active_command)) {
+            if (index < 2) {
+                report[i + 3] = (uint8_t)(packed_size >> (index * 8));
+                continue;
+            }
+            index -= 2;
+            if (index >= PALETTE_SIZE && packed_size < HALF_SIZE * 2U) {
+                unsigned int pixel = index - PALETTE_SIZE;
+                report[i + 3] = pixel < packed_size ? packed[pixel] : 0;
+                continue;
+            }
         }
         if (index < PALETTE_SIZE) {
             report[i + 3] = colors[index];
@@ -123,13 +150,48 @@ static uint8_t begin_capture(const uint8_t *palette, bool native_only)
     return command;
 }
 
+/* A low control byte describes 1–128 literals, a high byte a repeated value.
+ * Stop at the scratch limit and fall back to raw indices for noisy bands. */
+static unsigned int pack_half(const uint8_t *pixels, unsigned int used)
+{
+    for (unsigned int i = 0; i < HALF_SIZE;) {
+        unsigned int run = 1;
+        while (run < 128 && i + run < HALF_SIZE && pixels[i] == pixels[i + run]) ++run;
+        if (run >= 3) {
+            if (used + 2 > PACKED_CAPACITY) return 0;
+            packed[used++] = 0x80U | (run - 1);
+            packed[used++] = pixels[i];
+            i += run;
+        } else {
+            unsigned int start = i++;
+            while (i - start < 128 && i < HALF_SIZE) {
+                if (i + 2 < HALF_SIZE && pixels[i] == pixels[i + 1] && pixels[i] == pixels[i + 2]) break;
+                ++i;
+            }
+            unsigned int count = i - start;
+            if (used + 1 + count > PACKED_CAPACITY) return 0;
+            packed[used++] = count - 1;
+            memcpy(packed + used, pixels + start, count);
+            used += count;
+        }
+    }
+    return used;
+}
+
 static void end_capture(uint8_t command)
 {
+    unsigned int size = 0;
+    if (is_packed_band(command)) {
+        size = pack_half(top, 0);
+        if (size) size = pack_half(bottom, size);
+        if (!size) size = HALF_SIZE * 2U;
+    }
     uint32_t irq = __get_PRIMASK();
     __disable_irq();
     if (state == CAPTURING) {
         offset = 0;
         active_command = command;
+        packed_size = size;
         state = SENDING;
         send_chunk(&custom_hid);
     }
@@ -167,7 +229,7 @@ void doom_usb_video_capture_native_rows(doom_usb_video_row_fn native_row,
             }
         }
     } else if (is_lcd_band(command)) {
-        const unsigned int first = (command - VIDEO_LCD_FIRST_BAND) * LCD_BAND_ROWS;
+        const unsigned int first = first_lcd_row(command);
         for (unsigned int y = 0; y < LCD_BAND_ROWS; ++y) {
             uint8_t *row = lcd_band_row(y);
             if (native_row) {
@@ -203,7 +265,7 @@ void doom_usb_video_native_begin(const uint8_t *palette)
 void doom_usb_video_native_row(unsigned int y, const uint8_t *row)
 {
     if (!native_capture) return;
-    unsigned int first = (requested_command - VIDEO_LCD_FIRST_BAND) * LCD_BAND_ROWS;
+    unsigned int first = first_lcd_row(requested_command);
     if (y >= first && y < first + LCD_BAND_ROWS)
         memcpy(lcd_band_row(y - first), row, DOOM_LCD_WIDTH);
 }

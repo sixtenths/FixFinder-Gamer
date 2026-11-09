@@ -200,16 +200,11 @@ static void render(uint8_t *frame, bool first, uint8_t *previous, uint8_t *backg
         }
         if (first || !previous) {
             doom_dcs_write_native_span(y,line,x_start,width);
-        } else if (memcmp(previous,out,VIEW)!=0) {
-            unsigned int left=0, right=VIEW;
-            while (previous[left]==out[left]) ++left;
-            while (previous[right-1]==out[right-1]) --right;
-            doom_dcs_write_native_dirty_row(y,line,x_start+left,right-left);
+            if (previous) memcpy(previous,out,VIEW);
+        } else {
+            doom_dcs_update_native_row(y,line,previous,x_start,VIEW);
         }
-        if (previous) {
-            memcpy(previous,out,VIEW);
-            previous+=VIEW;
-        }
+        if (previous) previous+=VIEW;
         doom_usb_video_native_row(y,line);
         if (preview_y<DOOM_FRAME_HEIGHT && preview_y*H/DOOM_FRAME_HEIGHT==(unsigned int)y) {
             for (unsigned int x=0; x<DOOM_FRAME_WIDTH; ++x)
@@ -313,7 +308,7 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
                 fixfinder_set_led(played && mode==1 ? FIXFINDER_LED_RED : FIXFINDER_LED_YELLOW);
             }
         }
-        if (ready && !(frames&1) && (int32_t)(*clock-step)<17) {
+        if (ready && (int32_t)(*clock-step)<12) {
             render(frame,first_draw,previous,background,false);
             first_draw=false;
             doom_usb_video_capture(frame,rgb);
