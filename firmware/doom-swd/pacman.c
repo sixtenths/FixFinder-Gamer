@@ -59,21 +59,34 @@ static void bus_write(void *state, uint16_t addr, uint8_t value)
     else if (addr>=0x5060 && addr<0x5070) board.pos[addr-0x5060]=value;
 }
 
+static uint32_t voice_pitch(unsigned int voice)
+{
+    const uint8_t *reg=&board.sound[0x11+5*voice];
+    uint32_t increment=(reg[3]<<16)|(reg[2]<<12)|(reg[1]<<8)|(reg[0]<<4);
+    if (!voice) increment|=board.sound[0x10];
+    /* A 20-bit phase accumulator at 96 kHz. Play one octave higher on the beeper. */
+    return (increment*375U+1024U)>>11;
+}
+
 static uint32_t beeper_pitch(void)
 {
     if (!board.sound_enabled) return 0;
+
+    /* Voice 1 uses waveform 0 for the opening melody. Keep its written rests
+     * quiet so the accompaniment does not interrupt the tune. */
+    if (!(board.sound[0x0a]&7) && board.sound[0x1a]) {
+        uint32_t hz=voice_pitch(1);
+        return hz>4000?4000:hz;
+    }
 
     /* The beeper plays the loudest active Namco voice as a square wave. */
     unsigned int volume=0;
     uint32_t pitch=0;
     for (unsigned int voice=0; voice<3; ++voice) {
-        const uint8_t *reg=&board.sound[0x11+5*voice];
-        uint32_t increment=(reg[3]<<16)|(reg[2]<<12)|(reg[1]<<8)|(reg[0]<<4);
-        if (!voice) increment|=board.sound[0x10];
-        /* A 20-bit phase accumulator clocked at 96 kHz. */
-        uint32_t hz=(increment*375U+2048U)>>12;
-        if (hz>=80 && reg[4]>volume) {
-            volume=reg[4];
+        unsigned int level=board.sound[0x15+5*voice];
+        uint32_t hz=voice_pitch(voice);
+        if (hz>=80 && level>volume) {
+            volume=level;
             pitch=hz>4000?4000:hz;
         }
     }
@@ -111,12 +124,14 @@ static unsigned int tile_pen(int nx, int ny)
     return pen(board.colors[tile],pixel2(pacman_rom[GFX+offset],tx));
 }
 
-static void render(uint8_t *frame)
+static void render(uint8_t *frame, bool first)
 {
     static const int sprite_col[]={8,16,24,0};
     uint8_t line[W]={0};
     unsigned int preview_y=0;
-    doom_dcs_begin_native();
+    const unsigned int x_start=first?0:(W-VIEW)/2, width=first?W:VIEW;
+    doom_dcs_begin_native_span(x_start,width);
+    doom_usb_video_native_begin(rgb);
     for (int y=0; y<H; ++y) {
         int nx=y*288/H;
         if (board.flip) nx=287-nx;
@@ -152,13 +167,15 @@ static void render(uint8_t *frame)
                 if (color) out[x]=color;
             }
         }
-        doom_dcs_write_native(y,line);
+        doom_dcs_write_native_span(y,line,x_start,width);
+        doom_usb_video_native_row(y,line);
         if (preview_y<DOOM_FRAME_HEIGHT && preview_y*H/DOOM_FRAME_HEIGHT==(unsigned int)y) {
             for (unsigned int x=0; x<DOOM_FRAME_WIDTH; ++x)
                 frame[preview_y*DOOM_FRAME_WIDTH+x]=line[x*W/DOOM_FRAME_WIDTH];
             ++preview_y;
         }
     }
+    doom_usb_video_native_end();
 }
 
 static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
@@ -179,7 +196,7 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
     board.cpu.port_in=port_in;
     board.cpu.port_out=port_out;
     uint32_t step=*clock, cycle=0, frames=0, restart=0, attract_frames=0;
-    bool was_start=false, ready=false;
+    bool was_start=false, ready=false, first_draw=true;
     for (;;) {
         uint32_t now=*clock, keys=fixfinder_keys(now);
         if (fixfinder_arcade_exit(keys,now)) {
@@ -211,8 +228,9 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
         while ((int32_t)(board.cpu.cyc-cycle)<0) z80_step(&board.cpu);
         if (board.irq) z80_gen_int(&board.cpu,board.vector);
         if (ready) fixfinder_tone(beeper_pitch());
-        if (ready && !(frames&1)) {
-            render(frame);
+        if (ready && !(frames&1) && (int32_t)(*clock-step)<17) {
+            render(frame,first_draw);
+            first_draw=false;
             doom_usb_video_capture(frame,rgb);
         }
         ++frames;

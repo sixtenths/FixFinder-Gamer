@@ -19,15 +19,33 @@ bool doom_dcs_init(void)
     return true;
 }
 
-static bool write_row(const void *context, unsigned int row, const uint16_t *pixels)
+static void write_pixels(const uint16_t *pixels, unsigned int count)
 {
-    (void)context;
-    for (unsigned int x = 0; x < DOOM_LCD_WIDTH; ++x) {
+    for (unsigned int x = 0; x < count; ++x) {
         write_data((uint8_t)(pixels[x] >> 8));
         write_data((uint8_t)pixels[x]);
     }
+}
+
+static bool write_row(const void *context, unsigned int row, const uint16_t *pixels)
+{
+    (void)context;
+    write_pixels(pixels, DOOM_LCD_WIDTH);
     doom_lcd_write_row(row, pixels);
     return true;
+}
+
+void doom_dcs_begin_native_span(unsigned int x, unsigned int width)
+{
+    begin_panel_window(x, width, DOOM_LCD_HEIGHT);
+}
+
+void doom_dcs_write_native_span(unsigned int row, const uint8_t *indices,
+                                unsigned int x, unsigned int width)
+{
+    const uint16_t *pixels = doom_display_native_row(indices);
+    write_pixels(pixels + x, width);
+    doom_lcd_write_row(row, pixels);
 }
 
 void doom_dcs_present(const uint8_t *frame)

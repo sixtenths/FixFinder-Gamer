@@ -161,11 +161,17 @@ static void native_row(const uint8_t *frame, unsigned int y, uint8_t *row)
     }
 }
 
+static const uint8_t *usb_native_row(const void *frame, unsigned int y)
+{
+    static uint8_t row[DOOM_LCD_WIDTH] __attribute__((section(".arcade_art")));
+    native_row(frame, y, row);
+    return row;
+}
+
 static const uint8_t *preview_row(const void *frame, unsigned int y)
 {
     static uint8_t preview[W] __attribute__((section(".arcade_art")));
-    uint8_t row[DOOM_LCD_WIDTH];
-    native_row(frame, y * DOOM_LCD_HEIGHT / H, row);
+    const uint8_t *row = usb_native_row(frame, y * DOOM_LCD_HEIGHT / H);
     for (unsigned int x = 0; x < W; ++x)
         preview[x] = row[x * DOOM_LCD_WIDTH / W];
     return preview;
@@ -180,7 +186,7 @@ static void present(uint8_t *frame)
         native_row(frame, y, row);
         doom_dcs_write_native(y, row);
     }
-    doom_usb_video_capture_rows(preview_row, frame, palette);
+    doom_usb_video_capture_native_rows(usb_native_row, preview_row, frame, palette);
 }
 
 static void wait_until(const volatile uint32_t *clock, uint32_t deadline)
@@ -704,7 +710,7 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
             present(frame);
             redraw = false;
         } else {
-            doom_usb_video_capture_rows(preview_row, frame, palette);
+            doom_usb_video_capture_native_rows(usb_native_row, preview_row, frame, palette);
         }
         wait_until(clock,now+1);
     }

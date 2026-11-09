@@ -153,7 +153,7 @@ $pacman = @('C:\roms\pacman.zip', 'C:\roms\puckman.zip')
     -FixFinderLcd -CompactReciprocal -UsbGame -Arcade -PacmanRom $pacman
 ```
 
-The build verifies the program, graphics, and color ROM checksums against [MAME's Midway manifest](https://github.com/mamedev/mame/blob/master/src/mame/pacman/pacman.cpp). ROM files stay local. Pac-Man auto-starts after its self-test. **Erase + Enter** inserts a coin and starts another game. Steer with the same four keys as Maze Chase. The scanner beeper plays the pitch of the loudest active arcade sound voice as a square wave.
+The build verifies the program, graphics, and color ROM checksums against [MAME's Midway manifest](https://github.com/mamedev/mame/blob/master/src/mame/pacman/pacman.cpp). ROM files stay local. Pac-Man auto-starts after its self-test. **Erase + Enter** inserts a coin and starts another game. Steer with the same four keys as Maze Chase. The scanner beeper plays the opening melody on its own and follows the loudest active voice during play. The tones are raised an octave for the beeper.
 
 The USB game slot and the eMMC are separate. With `-Arcade -EmmcLibrary`, the game checks the board's FAT32 eMMC for `FFARCADE.PAK` and adds the pack's games to the selector. This reads the existing filesystem and uses no eMMC writes during gameplay. A missing or unreadable pack leaves the built-in games available.
 
@@ -194,7 +194,7 @@ For hardware notes and recovery references, see [LCD bring-up](LCD.md), [the sta
 
 ## Preview the game on a PC
 
-Install the latest DOOM build with `-UsbGame` and keep the scanner connected to Windows through USB. Run the viewer with Python and Tkinter, using the serial shown above. The default preview shows all 240 × 160 pixels of the game frame. The scanner enlarges that same frame for its LCD. The viewer receives four strips, so quick movement can show a seam between strips. Use `--fast` for a smoother 120 × 80 preview.
+Install the latest DOOM build with `-UsbGame` and keep the scanner connected to Windows through USB. Run the viewer with Python and Tkinter, using the serial shown above. The default mode streams the full 320 × 240 LCD raster with its RGB palette. Use `--scale 3` for a larger window with sharp pixel edges, `--source` for the lighter 240 × 160 game preview, or `--fast` for the 120 × 80 preview. Older firmware falls back to 240 × 160. The USB stream is assembled from strips, so movement can show a seam between strips.
 
 ```powershell
 python -B scripts/View-FixFinderUsb.py --serial $serial
