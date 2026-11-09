@@ -1,0 +1,140 @@
+#include <errno.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+
+#include "gd32f4xx.h"
+#include "doomdef.h"
+#include "d_event.h"
+#include "d_main.h"
+#include "global_data.h"
+#include "i_sound.h"
+#include "i_system_e32.h"
+#include "i_video.h"
+#include "z_zone.h"
+
+/* SWD can read these symbols using the linked ELF. */
+volatile unsigned int doom_frames;
+volatile unsigned int doom_frame_hash;
+volatile unsigned int doom_level_frames;
+volatile unsigned int doom_test_forward;
+volatile int32_t doom_player_x;
+volatile int32_t doom_player_y;
+char doom_error[160];
+static uint16_t doom_frame[SCREENWIDTH * SCREENHEIGHT]
+    __attribute__((section(".doom_frame")));
+static volatile uint32_t milliseconds;
+
+extern char _ebss;
+extern char __heap_end;
+
+void SysTick_Handler(void)
+{
+    milliseconds++;
+}
+
+clock_t clock(void)
+{
+    return (clock_t)((uint64_t)milliseconds * CLOCKS_PER_SEC / 1000U);
+}
+
+void *_sbrk(ptrdiff_t increment)
+{
+    static uintptr_t current;
+    const uintptr_t start = (uintptr_t)&_ebss;
+    const uintptr_t limit = (uintptr_t)&__heap_end;
+    if (current == 0) {
+        current = start;
+    }
+    if (increment > (ptrdiff_t)(limit - current) ||
+        increment < -(ptrdiff_t)(current - start)) {
+        errno = ENOMEM;
+        return (void *)-1;
+    }
+    const uintptr_t previous = current;
+    current += increment;
+    return (void *)previous;
+}
+
+int _write(int fd, const char *data, int count)
+{
+    (void)fd;
+    (void)data;
+    return count;
+}
+
+void I_Error(const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    vsnprintf(doom_error, sizeof(doom_error), format, args);
+    va_end(args);
+    for (;;) {
+        __WFI();
+    }
+}
+
+void I_InitScreen_e32(void) {}
+void I_ProcessKeyEvents(void)
+{
+    static bool was_pressed;
+    const bool pressed = doom_test_forward != 0;
+    if (pressed != was_pressed) {
+        event_t event = { .type = pressed ? ev_keydown : ev_keyup, .data1 = KEYD_UP };
+        D_PostEvent(&event);
+        was_pressed = pressed;
+    }
+}
+void I_SetPallete_e32(const byte *palette) { (void)palette; }
+void I_CreateBackBuffer_e32(void) { memset(doom_frame, 0, sizeof(doom_frame)); }
+unsigned short *I_GetBackBuffer(void) { return doom_frame; }
+unsigned short *I_GetFrontBuffer(void) { return doom_frame; }
+
+void I_FinishUpdate_e32(const byte *frame, const byte *palette,
+                        const unsigned int width, const unsigned int height)
+{
+    (void)palette;
+    /* Sample the rendered pixels cheaply so a debugger can verify liveness. */
+    uint32_t hash = 2166136261U;
+    for (unsigned int i = 0; i < 2U * width * height; i += 31U) {
+        hash = (hash ^ frame[i]) * 16777619U;
+    }
+    doom_frame_hash = hash;
+    if (_g->gamestate == GS_LEVEL && _g->gameepisode == 1 && _g->gamemap == 1 &&
+        _g->player.mo != NULL) {
+        doom_player_x = _g->player.mo->x;
+        doom_player_y = _g->player.mo->y;
+        doom_level_frames++;
+    }
+    doom_frames++;
+}
+
+int I_StartSound(int id, int channel, int volume, int separation)
+{
+    (void)id;
+    (void)volume;
+    (void)separation;
+    return channel;
+}
+
+void I_SetMusicVolume(int volume) { (void)volume; }
+void I_PauseSong(int handle) { (void)handle; }
+void I_ResumeSong(int handle) { (void)handle; }
+void I_PlaySong(int handle, int looping) { (void)handle; (void)looping; }
+void I_StopSong(int handle) { (void)handle; }
+
+void fixfinder_doom_run(void)
+{
+    SystemCoreClockUpdate();
+    if (SysTick_Config(SystemCoreClock / 1000U) != 0) {
+        I_Error("SysTick setup failed");
+    }
+    setvbuf(stdout, NULL, _IONBF, 0);
+    I_PreInitGraphics();
+    Z_Init();
+    InitGlobals();
+    D_DoomMain();
+}

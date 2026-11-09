@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory)]
     [string]$EngineSource,
 
-    [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin"
+    [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin",
+    [switch]$PassThru
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,6 +47,7 @@ $objects = foreach ($file in $files) {
 
 $engine = Join-Path $build 'engine.o'
 Invoke-ArmTool gcc ($arch + @('-r', '-nostdlib') + $objects + @('-o', $engine))
-Write-Output "Cross-compiled $($objects.Count) engine sources to $engine."
-Invoke-ArmTool size @($engine)
-Invoke-ArmTool nm @('-u', $engine)
+Write-Host "Cross-compiled $($objects.Count) engine sources to $engine."
+Invoke-ArmTool size @($engine) | Out-Host
+Invoke-ArmTool nm @('-u', $engine) | Out-Host
+if ($PassThru) { $build }

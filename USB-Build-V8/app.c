@@ -66,6 +66,11 @@ int main(void)
     usb_intr_config();
     __asm volatile("cpsie i" ::: "memory");
 
+#ifdef FIXFINDER_DOOM_SWD
+    extern void fixfinder_doom_run(void);
+    fixfinder_doom_run();
+#endif
+
     while(1) {
     }
 }

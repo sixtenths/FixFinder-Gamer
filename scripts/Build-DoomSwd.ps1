@@ -1,0 +1,116 @@
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)]
+    [string]$EngineSource,
+
+    [Parameter(Mandatory)]
+    [string]$ConvertedWad,
+
+    [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin"
+)
+
+$ErrorActionPreference = 'Stop'
+$source = (Resolve-Path -LiteralPath $EngineSource).Path
+$wad = (Resolve-Path -LiteralPath $ConvertedWad).Path
+$toolchain = (Resolve-Path -LiteralPath $ToolchainBin).Path
+$root = Split-Path -Parent $PSScriptRoot
+$build = Join-Path $root "build/doom-swd-$([guid]::NewGuid())"
+$arch = @('-mcpu=cortex-m4', '-mthumb')
+
+$wadBytes = [IO.File]::ReadAllBytes($wad)
+if ($wadBytes.Length -lt 12 -or [Text.Encoding]::ASCII.GetString($wadBytes, 0, 4) -ne 'IWAD' -or
+    [BitConverter]::ToUInt32($wadBytes, 8) -ne 12) {
+    throw 'Convert the reduced IWAD with the pinned GBADoom GbaWadUtil before linking.'
+}
+
+function Invoke-Gcc([string[]]$Arguments) {
+    & (Join-Path $toolchain 'arm-none-eabi-gcc.exe') @arch @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "arm-none-eabi-gcc exited with code $LASTEXITCODE."
+    }
+}
+
+function Replace-EngineSource([string]$Name, [string]$Pattern, [string]$Replacement) {
+    $original = Get-Content -LiteralPath (Join-Path $source "source/$Name.c") -Raw
+    $matches = [regex]::Matches($original, $Pattern)
+    if ($matches.Count -ne 1) { throw "Unexpected source layout in $Name.c." }
+    $match = $matches[0]
+    $modified = $original.Remove($match.Index, $match.Length).Insert($match.Index, $Replacement)
+    $copy = Join-Path $build "$Name.c"
+    Set-Content -LiteralPath $copy -Value $modified -NoNewline -Encoding ascii
+    Invoke-Gcc ($engineFlags + @('-c', $copy, '-o', (Join-Path $build "$Name.o")))
+}
+
+$engine = & "$PSScriptRoot/Check-DoomEngine.ps1" -EngineSource $source -ToolchainBin $toolchain -PassThru
+$v8 = & "$PSScriptRoot/Build-V8.ps1" -ToolchainBin $toolchain -PassThru
+New-Item -ItemType Directory -Path $build -Force | Out-Null
+
+Push-Location $root
+try {
+    $engineFlags = @('-Os', '-ffunction-sections', '-fdata-sections', '-fno-common',
+        '-DHAVE_CONFIG_H', '-std=gnu23', '-include', 'stdint.h', "-I$source/include",
+        '-Wno-incompatible-pointer-types', '-Wno-implicit-function-declaration')
+    # A single-map image boots directly into E1M1. Avoid a 64-bit access to the
+    # WAD directory, which the converter only aligns to four bytes.
+    Replace-EngineSource d_main 'D_StartTitle\(\);\s*// start up intro loop' 'G_DeferedInitNew(sk_medium, 1, 1);'
+    Replace-EngineSource w_wad '(?s)int_64_t nameint = 0;.*?if\(nameint == nameint2\)' @'
+char key[8] = {0};
+        strncpy(key, name, sizeof(key));
+        for (int i = header->numlumps - 1; i >= 0; i--)
+        {
+            if (memcmp(key, fileinfo[i].name, sizeof(key)) == 0)
+'@
+    Replace-EngineSource z_zone 'maxHeapSize = \(256 \* 1024\);' 'maxHeapSize = (144 * 1024);'
+
+    $sdk = 'GD32F4xx_Firmware_Library/Firmware'
+    $usb = "$sdk/GD32F4xx_usb_library"
+    $includes = @('-IFixFinder-USB-Test/inc', "-I$sdk/CMSIS", "-I$sdk/CMSIS/GD/GD32F4xx/Include",
+        "-I$sdk/GD32F4xx_standard_peripheral/Include", "-I$usb/driver/Include",
+        "-I$usb/device/core/Include", "-I$usb/device/class/hid/Include",
+        "-I$usb/ustd/common", "-I$usb/ustd/class/hid")
+    $platformFlags = @('-Os', '-ffunction-sections', '-fdata-sections', '-DGD32F427',
+        '-DUSE_USB_HS', '-DUSE_EMBEDDED_PHY', '-DHXTAL_VALUE=8000000U') + $includes
+    $app = Join-Path $build 'app.o'
+    $runtime = Join-Path $build 'runtime.o'
+    Invoke-Gcc ($platformFlags + @('-DFIXFINDER_DOOM_SWD', '-c', 'USB-Build-V8/app.c', '-o', $app))
+    Invoke-Gcc ($platformFlags + @('-std=gnu23', "-I$source/include", '-c',
+        'firmware/doom-swd/runtime.c', '-o', $runtime))
+
+    [IO.File]::WriteAllBytes((Join-Path $build 'doom.wad'), $wadBytes)
+    $wadSource = Join-Path $build 'wad.S'
+    $relativeWad = (Resolve-Path -Relative (Join-Path $build 'doom.wad')).Replace('\', '/')
+    @"
+.section .rodata.doom_iwad,"a",%progbits
+.balign 8
+.global doom_iwad
+doom_iwad:
+.incbin "$relativeWad"
+.set wad_bytes, . - doom_iwad
+.balign 4
+.global doom_iwad_len
+doom_iwad_len:
+.word wad_bytes
+"@ | Set-Content -LiteralPath $wadSource -Encoding ascii
+    $wadObject = Join-Path $build 'wad.o'
+    Invoke-Gcc @('-c', $wadSource, '-o', $wadObject)
+
+    $objects = @(Get-ChildItem -LiteralPath $v8 -Filter 'part_*.o' |
+        Where-Object Name -ne 'part_1.o' | ForEach-Object FullName)
+    $objects += @(Get-ChildItem -LiteralPath $engine -Filter '*.o' |
+        Where-Object Name -notin 'engine.o', 'd_main.o', 'w_wad.o', 'z_zone.o' | ForEach-Object FullName)
+    $objects += $app, $runtime, $wadObject
+    $objects += @('d_main.o', 'w_wad.o', 'z_zone.o') | ForEach-Object { Join-Path $build $_ }
+
+    $elf = Join-Path $build 'FixFinder-Doom-SWD.elf'
+    $map = Join-Path $build 'FixFinder-Doom-SWD.map'
+    # An argument file keeps this link below the Windows command-line limit.
+    $objectList = Join-Path $build 'objects.rsp'
+    $objects | ForEach-Object { '"' + $_.Replace('\', '/') + '"' } |
+        Set-Content -LiteralPath $objectList -Encoding ascii
+    Invoke-Gcc @('-nostartfiles', '--specs=nano.specs', '--specs=nosys.specs',
+        '-T', 'firmware/doom-swd/firmware.ld', '-Wl,--gc-sections,--print-memory-usage',
+        "-Wl,-Map,$map", "@$objectList", '-o', $elf)
+    Write-Output "Linked SWD diagnostic ELF at $elf"
+} finally {
+    Pop-Location
+}

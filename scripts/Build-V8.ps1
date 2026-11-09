@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin"
+    [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin",
+    [switch]$PassThru
 )
 
 $ErrorActionPreference = 'Stop'
@@ -80,7 +81,8 @@ try {
     if ($actual -ne $expected) {
         throw "V8 build differs from recovery image (SHA-256 $actual). Inspect $work."
     }
-    Write-Output "V8 reproduced byte for byte ($actual). Output: $work"
+    Write-Host "V8 reproduced byte for byte ($actual). Output: $work"
+    if ($PassThru) { $work }
 } finally {
     Pop-Location
 }
