@@ -6,13 +6,13 @@ from struct import pack, unpack
 
 from elftools.elf.elffile import ELFFile
 from unicorn import UC_ARCH_ARM, UC_HOOK_BLOCK, UC_HOOK_CODE, UC_MODE_MCLASS, UC_MODE_THUMB, Uc, UcError
-from unicorn.arm_const import UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_SP
+from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_SP
 
 FORWARD = 1 << 0
 FIRE = 1 << 4
 
 
-def smoke_test(path, frame_output):
+def smoke_test(path, frame_output, check_progression):
     cpu = Uc(UC_ARCH_ARM, UC_MODE_THUMB | UC_MODE_MCLASS)
     for address, size in (
         (0x08000000, 3 << 20), (0x10000000, 64 << 10), (0x20000000, 192 << 10),
@@ -44,6 +44,22 @@ def smoke_test(path, frame_output):
     first_level_frame = 0
     expected_rows = []
     verified_rows = []
+    active_map = 0
+    next_map = 0
+    map_start_frame = 0
+    intermission_start = None
+
+    def level_setup(uc, _address, _size, _data):
+        nonlocal active_map, map_start_frame
+        if uc.reg_read(UC_ARM_REG_R0) == 1:
+            active_map = uc.reg_read(UC_ARM_REG_R1)
+            map_start_frame = read_word("doom_level_frames")
+            if next_map and active_map == next_map:
+                uc.mem_write(symbols["doom_test_buttons"], pack("<I", 0))
+
+    def start_intermission(_uc, _address, _size, _data):
+        nonlocal intermission_start
+        intermission_start = read_word("doom_frames")
 
     def capture_frame(uc, _address, _size, _data):
         if read_word("doom_level_frames") != 29:
@@ -79,6 +95,15 @@ def smoke_test(path, frame_output):
         if uc.mem_read(symbols["doom_error"], 1)[0]:
             uc.emu_stop()
             return
+        if next_map:
+            if active_map == next_map:
+                if read_word("doom_level_frames") - map_start_frame >= 10:
+                    uc.emu_stop()
+            elif intermission_start is not None:
+                elapsed = read_word("doom_frames") - intermission_start
+                pressed = FIRE if elapsed % 8 >= 4 else 0
+                uc.mem_write(symbols["doom_test_buttons"], pack("<I", pressed))
+            return
 
         frames = read_word("doom_level_frames")
         if frames >= 10 and starting_position is None:
@@ -95,7 +120,11 @@ def smoke_test(path, frame_output):
             uc.emu_stop()
 
     cpu.hook_add(UC_HOOK_BLOCK, tick)
-    for symbol, callback in (("I_FinishUpdate_e32", capture_frame), ("doom_lcd_write_row", check_row)):
+    hooks = [("I_FinishUpdate_e32", capture_frame), ("doom_lcd_write_row", check_row)]
+    if check_progression:
+        # Install before Unicorn translates either engine function.
+        hooks.extend((("P_SetupLevel", level_setup), ("WI_Start", start_intermission)))
+    for symbol, callback in hooks:
         address = symbols[symbol] & ~1
         cpu.hook_add(UC_HOOK_CODE, callback, begin=address, end=address)
     cpu.reg_write(UC_ARM_REG_SP, symbols["_sp"])
@@ -135,10 +164,34 @@ def smoke_test(path, frame_output):
                             (pixel & 31) * 255 // 31))
         frame_output.write_bytes(b"P6\n320 240\n255\n" + rgb)
 
+    if check_progression:
+        for next_map in (2, 3):
+            intermission_start = None
+            cpu.mem_write(symbols["doom_test_buttons"], pack("<I", 0))
+            # Trigger the engine's normal exit path without walking the level.
+            saved = cpu.context_save()
+            stop = 0x2002D000
+            cpu.reg_write(UC_ARM_REG_LR, stop | 1)
+            cpu.emu_start(symbols["G_ExitLevel"] | 1, stop, timeout=100_000)
+            if cpu.reg_read(UC_ARM_REG_PC) != stop:
+                raise SystemExit("G_ExitLevel did not return")
+            cpu.context_restore(saved)
+            cpu.emu_start(cpu.reg_read(UC_ARM_REG_PC) | 1, 0, timeout=20_000_000)
+            error = bytes(cpu.mem_read(symbols["doom_error"], 160)).split(b"\0", 1)[0]
+            if error:
+                raise SystemExit(f"DOOM reported an error: {error.decode('ascii', errors='replace')}")
+            rendered = read_word("doom_level_frames") - map_start_frame
+            if intermission_start is None or active_map != next_map or rendered < 10:
+                raise SystemExit(f"Expected E1M{next_map} after intermission, saw map {active_map} "
+                                 f"with {rendered} rendered frames")
+            print(f"Intermission completed and E1M{next_map} rendered {rendered} frames")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("elf", help="ELF produced by Build-DoomSwd.ps1")
     parser.add_argument("--frame-output", type=Path, help="Write the verified RGB565 frame as a PPM")
+    parser.add_argument("--check-progression", action="store_true",
+                        help="Check intermission and level transitions in an E1M1–E1M3 build")
     args = parser.parse_args()
-    smoke_test(args.elf, args.frame_output)
+    smoke_test(args.elf, args.frame_output, args.check_progression)

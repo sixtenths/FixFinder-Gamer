@@ -136,8 +136,7 @@ void I_FinishUpdate_e32(const byte *frame, const byte *palette,
     frame_hash = 2166136261U;
     doom_display_present(frame);
     doom_frame_hash = frame_hash;
-    if (_g->gamestate == GS_LEVEL && _g->gameepisode == 1 && _g->gamemap == 1 &&
-        _g->player.mo != NULL) {
+    if (_g->gamestate == GS_LEVEL && _g->player.mo != NULL) {
         doom_player_x = _g->player.mo->x;
         doom_player_y = _g->player.mo->y;
         doom_player_bullets = _g->player.ammo[am_clip];
