@@ -100,7 +100,7 @@ uint32_t fixfinder_buttons(uint32_t now)
 
     switch (stable) {
     case KEY_BACK | KEY_ENTER: return DOOM_BUTTON_FIRE;
-    case KEY_ERASE | KEY_ENTER: return DOOM_BUTTON_USE;
+    case KEY_ERASE | KEY_DOWN: return DOOM_BUTTON_USE;
     case KEY_DOWN | KEY_BACK: return DOOM_BUTTON_MENU;
     case KEY_DOWN | KEY_ENTER: return DOOM_BUTTON_MAP;
     default:

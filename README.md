@@ -40,7 +40,7 @@ For the experimental 5034VSM with the verified `00 e3 00 00` display response, u
 | Erase / Down | Walk forward / backward |
 | Back / Enter | Turn left / right |
 | Back + Enter | Fire |
-| Erase + Enter | Use doors and switches |
+| Erase + Down | Use doors and switches |
 | Down + Back | Menu |
 | Down + Enter | Automap |
 

@@ -11,7 +11,7 @@ Unplug its USB cable, wait a few seconds, then reconnect it while watching the s
 | Erase / Down | Walk forward / backward |
 | Back / Enter | Turn left / right |
 | Back + Enter | Fire |
-| Erase + Enter | Use doors and switches |
+| Erase + Down | Use doors and switches |
 | Down + Back | Menu |
 | Down + Enter | Automap |
 
