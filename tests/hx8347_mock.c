@@ -1,5 +1,6 @@
 #include "hx8347.h"
 #include "display.h"
+#include "v9_color_test.h"
 
 static const uint8_t portrait_window[] = {0, 0, 0, 239, 0, 0, 1, 63};
 static const uint8_t landscape_window[] = {0, 0, 1, 63, 0, 0, 0, 239};
@@ -117,6 +118,55 @@ static bool check_game_frame(size_t fail_row)
     return check_frame(doom_display_hx8347(indexed, &bus));
 }
 
+static const uint16_t diagnostic_colors[] = {0xf800, 0x07e0, 0x001f, 0xffff, 0x0000};
+static size_t delays;
+static bool bad_delay;
+
+static void check_color_delay(uint32_t milliseconds)
+{
+    if (milliseconds != 1000 || delays >= 5 || !check_frame(true) ||
+        v9_lcd_progress.phase != V9_LCD_SHOWING_COLOR ||
+        v9_lcd_progress.color != diagnostic_colors[delays]) {
+        bad_delay = true;
+        return;
+    }
+    if (++delays < 5) {
+        setup_frame(true, 0);
+        mock.color = diagnostic_colors[delays];
+    }
+}
+
+static int check_v9(void)
+{
+    setup_frame(true, 0);
+    mock.read_count = 0;
+    if (v9_lcd_color_test(&bus, 0x47, true, check_color_delay) ||
+        v9_lcd_progress.phase != V9_LCD_ID_UNREADABLE || mock.register_count != 0) return 10;
+
+    mock.read_count = 0;
+    mock.reads[0] = mock.reads[1] = 0x75;
+    if (v9_lcd_color_test(&bus, 0x47, true, check_color_delay) ||
+        v9_lcd_progress.phase != V9_LCD_ID_MISMATCH ||
+        v9_lcd_progress.controller_id != 0x75 || mock.register_count != 0) return 11;
+
+    mock.read_count = 0;
+    mock.reads[0] = mock.reads[1] = 0x47;
+    setup_frame(true, 4);
+    mock.color = diagnostic_colors[0];
+    if (v9_lcd_color_test(&bus, 0x47, true, check_color_delay) ||
+        v9_lcd_progress.phase != V9_LCD_FILL_FAILED ||
+        v9_lcd_progress.color != diagnostic_colors[0] || !check_frame(false) ||
+        delays || bad_delay) return 12;
+
+    mock.read_count = 0;
+    setup_frame(true, 0);
+    mock.color = diagnostic_colors[0];
+    if (!v9_lcd_color_test(&bus, 0x47, true, check_color_delay) ||
+        v9_lcd_progress.phase != V9_LCD_COMPLETE ||
+        v9_lcd_progress.controller_id != 0x47 || delays != 5 || bad_delay) return 13;
+    return 0;
+}
+
 int test_lcd(void)
 {
     uint8_t id = 0;
@@ -136,5 +186,5 @@ int test_lcd(void)
     if (!check_fill(true, 0x001f, 4)) return 7;
     if (!check_game_frame(0)) return 8;
     if (!check_game_frame(4)) return 9;
-    return 0;
+    return check_v9();
 }

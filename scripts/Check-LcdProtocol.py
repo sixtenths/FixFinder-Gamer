@@ -23,7 +23,8 @@ def run_check(toolchain):
                 "-mcpu=cortex-m4", "-mthumb", "-std=c11", "-Os", "-Wall", "-Wextra", "-Werror",
                 "-ffreestanding", "-nostdlib", "-Wl,-Ttext,0x08000000,-Tbss,0x20000000,-e,test_lcd",
                 "-Ifirmware/lcd", "-Ifirmware/doom-swd", "firmware/lcd/hx8347.c",
-                "firmware/lcd/doom_hx8347.c", "firmware/doom-swd/display.c", "tests/hx8347_mock.c",
+                "firmware/lcd/doom_hx8347.c", "firmware/lcd/v9_color_test.c",
+                "firmware/doom-swd/display.c", "tests/hx8347_mock.c",
                 "-o", str(elf_path),
             ],
             cwd=root,
@@ -47,7 +48,7 @@ def run_check(toolchain):
         result = cpu.reg_read(UC_ARM_REG_R0)
         if result != 0:
             raise SystemExit(f"LCD protocol check failed at case {result}")
-        print("Verified ID sampling, RGB565 fills, all 76,800 game-frame pixels, and abort cleanup.")
+        print("Verified ID sampling, V9 color sequence, all 76,800 game-frame pixels, and abort cleanup.")
 
 
 if __name__ == "__main__":
