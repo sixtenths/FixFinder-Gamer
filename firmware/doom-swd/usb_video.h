@@ -21,6 +21,7 @@ void doom_usb_video_capture_rows(doom_usb_video_row_fn row, const void *context,
 void doom_usb_video_capture_native_rows(doom_usb_video_row_fn native_row,
                                         doom_usb_video_row_fn preview_row,
                                         const void *context, const uint8_t *palette);
+bool doom_usb_video_native_requested(void);
 void doom_usb_video_native_begin(const uint8_t *palette);
 void doom_usb_video_native_row(unsigned int y, const uint8_t *row);
 void doom_usb_video_native_end(void);

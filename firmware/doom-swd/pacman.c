@@ -19,7 +19,7 @@ extern const uint8_t pacman_rom[];
 
 enum {
     W=DOOM_LCD_WIDTH, H=DOOM_LCD_HEIGHT, VIEW=186,
-    GFX=0x4000, COLOR=0x6000, LOOKUP=0x6020
+    GFX=0x4000, COLOR=0x6000, LOOKUP=0x6020, PAUSE_BG=32, PAUSE_INK=33
 };
 static struct {
     z80 cpu;
@@ -138,7 +138,7 @@ static unsigned int tile_pen(int nx, int ny)
     return pen(board.colors[tile],pixel2(pacman_rom[GFX+offset],tx));
 }
 
-static void render(uint8_t *frame, bool first, uint8_t *previous, uint8_t *background)
+static void render(uint8_t *frame, bool first, uint8_t *previous, uint8_t *background, bool paused)
 {
     static const int sprite_col[]={8,16,24,0};
     uint8_t line[W]={0};
@@ -147,6 +147,15 @@ static void render(uint8_t *frame, bool first, uint8_t *previous, uint8_t *backg
     if (first || !previous) doom_dcs_begin_native_span(x_start,width);
     doom_usb_video_native_begin(rgb);
     for (int y=0; y<H; ++y) {
+        if (paused && y>=12 && y<44) {
+            memset(line+270,PAUSE_BG,32);
+            if (y>=19 && y<37) {
+                memset(line+279,PAUSE_INK,5);
+                memset(line+288,PAUSE_INK,5);
+            }
+        } else if (paused && y==44) {
+            memset(line+270,0,32);
+        }
         int nx=y*288/H;
         if (board.flip) nx=287-nx;
         int nx2=((y+1)*288-1)/H;
@@ -222,6 +231,8 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
         rgb[3*i+1]=33*((c>>3)&1)+71*((c>>4)&1)+151*((c>>5)&1);
         rgb[3*i+2]=81*((c>>6)&1)+174*(c>>7);
     }
+    const uint8_t pause_colors[]={28,33,54, 255,210,82};
+    memcpy(rgb+3*PAUSE_BG,pause_colors,sizeof pause_colors);
     doom_display_set_palette(rgb);
     z80_init(&board.cpu);
     board.cpu.read_byte=bus_read;
@@ -231,7 +242,7 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
     uint8_t *previous=malloc(VIEW*H);
     uint8_t *background=malloc(VIEW*H);
     uint32_t step=*clock, cycle=0, frames=0, restart=0, attract_frames=0;
-    bool was_start=false, ready=false, first_draw=true;
+    bool was_start=false, ready=false, first_draw=true, was_pause=false, paused=false;
     for (;;) {
         uint32_t now=*clock, keys=fixfinder_keys(now);
         if (fixfinder_arcade_exit(keys,now)) {
@@ -240,9 +251,26 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
             free(background);
             return;
         }
+        bool pause=(keys==(KEY_ENTER|KEY_BACK));
+        bool toggle=ready && pause && !was_pause;
+        was_pause=pause;
+        if (toggle) {
+            paused=!paused;
+            fixfinder_tone(0);
+            render(frame,true,previous,background,paused);
+            first_draw=false;
+            step=*clock;
+        }
         bool start=(keys==(KEY_ERASE|KEY_ENTER));
-        if (ready && start && !was_start) restart=frames+1;
+        if (!paused && ready && start && !was_start) restart=frames+1;
         was_start=start;
+        if (paused) {
+            if (!toggle && doom_usb_video_native_requested())
+                render(frame,false,previous,background,true);
+            doom_usb_video_capture(frame,rgb);
+            while (*clock==now) {}
+            continue;
+        }
         board.in0=0xff;
         if (keys==KEY_ERASE) board.in0&=~1;
         if (keys==KEY_BACK) board.in0&=~2;
@@ -266,7 +294,7 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
         if (board.irq) z80_gen_int(&board.cpu,board.vector);
         if (ready) fixfinder_tone(beeper_pitch());
         if (ready && !(frames&1) && (int32_t)(*clock-step)<17) {
-            render(frame,first_draw,previous,background);
+            render(frame,first_draw,previous,background,false);
             first_draw=false;
             doom_usb_video_capture(frame,rgb);
         }

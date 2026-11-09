@@ -36,6 +36,8 @@ def keyboard_mask(held):
         return 16
     if "r" in held:
         arcade = 8 | 4  # Pac-Man's coin and restart chord.
+    elif "p" in held:
+        arcade = 4 | 1  # Pac-Man's pause chord.
     return arcade | (doom << 5)
 
 
@@ -140,7 +142,7 @@ def view(serial, fast, source, scale):
     def key(event, pressed):
         nonlocal desired
         name = event.keysym.lower()
-        if name not in DOOM_KEYS and name not in ("r", "backspace"):
+        if name not in DOOM_KEYS and name not in ("r", "p", "backspace"):
             return None
         if pressed:
             held[name] = None

@@ -190,6 +190,11 @@ void doom_usb_video_capture_native_rows(doom_usb_video_row_fn native_row,
     end_capture(command);
 }
 
+bool doom_usb_video_native_requested(void)
+{
+    return state == REQUESTED && is_lcd_band(requested_command);
+}
+
 void doom_usb_video_native_begin(const uint8_t *palette)
 {
     native_capture = begin_capture(palette, true) != 0;

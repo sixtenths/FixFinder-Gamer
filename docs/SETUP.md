@@ -154,7 +154,7 @@ $pacman = @('C:\roms\pacman.zip', 'C:\roms\puckman.zip')
     -FixFinderLcd -CompactReciprocal -UsbGame -Arcade -PacmanRom $pacman
 ```
 
-The build verifies the program, graphics, and color ROM checksums against [MAME's Midway manifest](https://github.com/mamedev/mame/blob/master/src/mame/pacman/pacman.cpp). ROM files stay local. Pac-Man auto-starts after its self-test. **Erase + Enter** inserts a coin and starts another game. Steer with the same four keys as Maze Chase. The scanner beeper plays the opening melody on its own and follows the loudest active voice during play. The tones are raised an octave for the beeper.
+The build verifies the program, graphics, and color ROM checksums against [MAME's Midway manifest](https://github.com/mamedev/mame/blob/master/src/mame/pacman/pacman.cpp). ROM files stay local. Pac-Man auto-starts after its self-test. **Erase + Enter** inserts a coin and starts another game. Press **Enter + Back** on the scanner or **P** in the USB viewer to pause or resume. Steer with the same four keys as Maze Chase. The scanner beeper plays the opening melody on its own and follows the loudest active voice during play. The tones are raised an octave for the beeper.
 
 The USB game slot and the eMMC are separate. With `-Arcade -EmmcLibrary`, the game checks the board's FAT32 eMMC for `FFARCADE.PAK` and adds the pack's games to the selector. This reads the existing filesystem and uses no eMMC writes during gameplay. A missing or unreadable pack leaves the built-in games available.
 
