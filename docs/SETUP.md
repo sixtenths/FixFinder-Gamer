@@ -2,6 +2,22 @@
 
 This guide targets the USB-C AutoZone FixFinder **5034VSM** with a **GD32F427ZK** and PCB marking **`PCB_2L_5034_REVC_TYPEC_20200319`**. [Board photos and LCD notes](LCD.md)
 
+## Identify your scanner
+
+AutoZone uses the orange Fix Finder for its in-store scan service. Innova’s public catalog and update list provide no retail cross-reference for the `5034VSM`. Innova’s Windows updater 1.3.9 lists it under USB product IDs `064A` and `064B`. The project observed stock USB ID `1720:064A` on a physical scanner. [AutoZone Fix Finder service](https://www.autozone.com/lp/fix-finder) · [Innova update list](https://innova-electronics.helpscoutdocs.com/article/2692-innova-obd2-scan-tool-updates) · [Bench notes](LCD.md)
+
+The retail **FixAssist 3100RS** and **CarScan Inspector 5310** are candidates for a future port. Innova’s updater groups revisions of those two retail models under `03EF` and `03E5`, separate from the Fix Finder IDs. Their main MCU, display, and pin wiring would need to be checked on an actual board before either could run this firmware. [Innova 3100RS](https://www.innova.com/products/fixassist-3100rs) · [Innova 5310](https://www.innova.com/products/carscan-inspector-5310)
+
+On Windows, plug in a stock scanner with a USB data cable and run this in PowerShell. It prints the Innova USB vendor and product IDs without the device serial number.
+
+```powershell
+Get-PnpDevice -PresentOnly | ForEach-Object {
+    if ($_.InstanceId -match '^USB\\(VID_1720&PID_[0-9A-F]{4})') { $Matches[1] }
+} | Sort-Object -Unique
+```
+
+If you’re checking a used unit before buying it for this project, ask for the model label and, if available, the USB ID or board photos. Before flashing, confirm the exact PCB revision and MCU. Only the board listed above has run the arcade on hardware. [PCB marking photo](photos/286.jpg) · [MCU photo](photos/265.jpg)
+
 ## Start with one scanner
 
 You don’t need a second scanner. The second unit in the [hardware notes](LCD.md) was used to learn how the factory display works. The wiring, loader, and game builds below target the scanner you already have.
