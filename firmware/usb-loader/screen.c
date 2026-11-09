@@ -11,10 +11,10 @@
 #define CARD 0x2924U
 #define TRACK 0x4207U
 #define INK 0xffdfU
-#define MUTED 0xce58U
 #define ORANGE 0xfc00U
 #define RED 0xe947U
 #define WHITE 0xffffU
+#define BAR_Y 215U
 
 static bool available;
 static int drawn_view = -1;
@@ -62,27 +62,22 @@ static uint16_t blend(uint16_t ink, uint16_t paper, unsigned int alpha)
     return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
-static void label(unsigned int x, unsigned int y, const char *text, bool large,
-                  uint16_t ink, uint16_t paper)
+static void label(unsigned int x, unsigned int y, const char *text, uint16_t paper)
 {
-    const uint8_t *widths = large ? large_width : small_width;
-    const uint16_t *offsets = large ? large_offset : small_offset;
-    const uint8_t *glyphs = large ? large_glyphs : small_glyphs;
-    const unsigned int height = large ? LARGE_HEIGHT : SMALL_HEIGHT;
-    const uint16_t colors[] = {paper, blend(ink, paper, 1), blend(ink, paper, 2), ink};
+    const uint16_t colors[] = {paper, blend(INK, paper, 1), blend(INK, paper, 2), INK};
     for (; *text; ++text) {
         if (*text == ' ') {
-            x += large ? 5 : 4;
+            x += 5;
             continue;
         }
         unsigned int letter = (unsigned int)(*text - 'A');
-        unsigned int width = widths[letter];
+        unsigned int width = large_width[letter];
         if (width == 0) {
             continue;
         }
-        const uint8_t *glyph = glyphs + offsets[letter];
-        window(x, y, width, height);
-        for (unsigned int i = 0; i < width * height; ++i) {
+        const uint8_t *glyph = large_glyphs + large_offset[letter];
+        window(x, y, width, LARGE_HEIGHT);
+        for (unsigned int i = 0; i < width * LARGE_HEIGHT; ++i) {
             pixel(colors[(glyph[i / 4] >> (2 * (i % 4))) & 3U]);
         }
         x += width + 1;
@@ -90,10 +85,10 @@ static void label(unsigned int x, unsigned int y, const char *text, bool large,
 }
 
 static void draw_logo(unsigned int y, unsigned int width, unsigned int height,
-                      const uint8_t *src, const uint16_t *palette, bool doom)
+                      const uint8_t *src, const uint16_t *palette, unsigned int scale)
 {
     /* The stream uses literal runs and overlapping back-references. */
-    const unsigned int size = doom ? width * height : width * height / 2;
+    const unsigned int size = width * height / 2;
     uint8_t packed[size];
     unsigned int at = 0;
     while (at < size) {
@@ -114,22 +109,16 @@ static void draw_logo(unsigned int y, unsigned int width, unsigned int height,
             }
         }
     }
-    if (doom) {
-        window((WIDTH - width * 3) / 2, y, width * 3, height * 3);
-        for (unsigned int row = 0; row < height * 3; ++row) {
+    window((WIDTH - width * scale) / 2, y, width * scale, height * scale);
+    for (unsigned int row = 0; row < height; ++row) {
+        for (unsigned int repeat = 0; repeat < scale; ++repeat) {
             for (unsigned int x = 0; x < width; ++x) {
-                unsigned int i = (row / 3) * width + x;
-                uint16_t color = palette[packed[i]];
-                pixel(color);
-                pixel(color);
-                pixel(color);
+                unsigned int i = row * width + x;
+                uint16_t color = palette[(packed[i / 2] >> ((i & 1U) * 4)) & 15U];
+                for (unsigned int col = 0; col < scale; ++col) {
+                    pixel(color);
+                }
             }
-        }
-    } else {
-        window((WIDTH - width) / 2, y, width, height);
-        for (unsigned int i = 0; i < size; ++i) {
-            pixel(palette[packed[i] & 15]);
-            pixel(palette[packed[i] >> 4]);
         }
     }
 }
@@ -144,7 +133,7 @@ bool loader_screen_init(void)
     start_panel(usb_mdelay, 0xa0);
     fill(0, 0, WIDTH, HEIGHT, BG);
     fill(0, 0, WIDTH, 66, WHITE);
-    draw_logo(22, LOGO_WIDTH, LOGO_HEIGHT, logo_data, logo_palette, false);
+    draw_logo(22, LOGO_WIDTH, LOGO_HEIGHT, logo_data, logo_palette, 1);
     fill(0, 66, WIDTH, 3, ORANGE);
     available = true;
     loader_screen_draw(VIEW_CHECKING, 0);
@@ -154,17 +143,14 @@ bool loader_screen_init(void)
 
 void loader_screen_draw(enum loader_view view, unsigned int percent)
 {
-    static const struct {
-        const char *title;
-        const char *detail;
-    } labels[] = {
-        [VIEW_WAIT] = {"USB LOADER READY", "CONNECT THE PC INSTALLER"},
-        [VIEW_INSTALL] = {"INSTALLING GAME", "KEEP USB CONNECTED"},
-        [VIEW_VERIFY] = {"VERIFYING GAME", "CHECKING THE UPLOAD"},
-        [VIEW_READY] = {"GAME VERIFIED", "READY TO START"},
-        [VIEW_ERROR] = {"UPDATE FAILED", "RETRY FROM THE PC"},
+    static const char *const labels[] = {
+        [VIEW_WAIT] = "USB LOADER READY",
+        [VIEW_INSTALL] = "INSTALLING GAME",
+        [VIEW_VERIFY] = "VERIFYING GAME",
+        [VIEW_READY] = "GAME VERIFIED",
+        [VIEW_ERROR] = "UPDATE FAILED",
 #ifdef FIXFINDER_RADIO
-        [VIEW_WIFI] = {"WIFI LOADER READY", "JOIN THE FIXFINDER NETWORK"}
+        [VIEW_WIFI] = "WIFI LOADER READY"
 #endif
     };
     if (!available) {
@@ -180,27 +166,26 @@ void loader_screen_draw(enum loader_view view, unsigned int percent)
         fill(0, 69, WIDTH, HEIGHT - 69, BG);
         if (view == VIEW_BOOT) {
 #ifndef FIXFINDER_RADIO
-            draw_logo(76, DOOM_LOGO_WIDTH, DOOM_LOGO_HEIGHT, doom_logo_data, doom_logo_palette, true);
+            draw_logo(70, DOOM_LOGO_WIDTH, DOOM_LOGO_HEIGHT, doom_logo_data, doom_logo_palette, 2);
 #endif
-            label(90, 166, "LOADING DOOM", true, INK, BG);
+            label(90, 194, "LOADING DOOM", BG);
         } else {
-            fill(22, 115, 276, 103, CARD);
-            label(36, 128, labels[view].title, true, INK, CARD);
-            label(36, 151, labels[view].detail, false, MUTED, CARD);
+            fill(22, 115, 276, 115, CARD);
+            label(36, 147, labels[view], CARD);
         }
-        fill(36, 194, 248, 12, TRACK);
+        fill(36, BAR_Y, 248, 12, TRACK);
         drawn_view = view;
         drawn_width = 0;
     }
     unsigned int width = percent * 248 / 100;
     if (width > drawn_width) {
-        fill(36 + drawn_width, 194, width - drawn_width, 12, ORANGE);
+        fill(36 + drawn_width, BAR_Y, width - drawn_width, 12, ORANGE);
     } else if (width < drawn_width) {
-        fill(36 + width, 194, drawn_width - width, 12, TRACK);
+        fill(36 + width, BAR_Y, drawn_width - width, 12, TRACK);
     }
     drawn_width = width;
     if (view == VIEW_ERROR) {
-        fill(36, 194, 248, 12, RED);
+        fill(36, BAR_Y, 248, 12, RED);
     }
 }
 
