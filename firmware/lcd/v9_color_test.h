@@ -10,7 +10,9 @@ enum v9_lcd_phase {
     V9_LCD_ID_MISMATCH,
     V9_LCD_SHOWING_COLOR,
     V9_LCD_FILL_FAILED,
-    V9_LCD_COMPLETE
+    V9_LCD_COMPLETE,
+    V9_LCD_BOARD_INIT,
+    V9_LCD_BOARD_FAILED
 };
 
 struct v9_lcd_progress {

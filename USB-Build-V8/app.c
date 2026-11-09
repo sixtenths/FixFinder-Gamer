@@ -69,6 +69,9 @@ int main(void)
 #ifdef FIXFINDER_DOOM_SWD
     extern void fixfinder_doom_run(void);
     fixfinder_doom_run();
+#elif defined(FIXFINDER_LCD_V9)
+    extern void fixfinder_v9_run(void);
+    fixfinder_v9_run();
 #endif
 
     while(1) {
