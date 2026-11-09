@@ -3,6 +3,8 @@
 #include "gd32f4xx.h"
 #include "gd32f4xx_gpio.h"
 #include "gd32f4xx_rcu.h"
+#include "gd32f4xx_timer.h"
+#include <stdbool.h>
 
 #define BACK_PIN  (1U << 0)  /* PG0 */
 #define DOWN_PIN  (1U << 4)  /* PF4 */
@@ -16,6 +18,8 @@
 #define BEEPER_PIN (1U << 13) /* PF13, active high */
 
 static volatile uint32_t beep_remaining;
+static uint32_t tone_hz, tone_timer_hz;
+static bool tone_high;
 
 static void configure_output(uint32_t port, unsigned int pin, unsigned int high)
 {
@@ -59,6 +63,57 @@ void fixfinder_io_tick(void)
     if (beep_remaining != 0 && --beep_remaining == 0) {
         GPIO_BOP(GPIOF) = BEEPER_PIN << 16;
     }
+}
+
+void TIMER6_IRQHandler(void)
+{
+    TIMER_INTF(TIMER6) = 0;
+    tone_high = !tone_high;
+    GPIO_BOP(GPIOF) = tone_high ? BEEPER_PIN : BEEPER_PIN << 16;
+}
+
+void fixfinder_tone(uint32_t hz)
+{
+    if (hz == tone_hz) return;
+
+    if (hz && !tone_timer_hz) {
+        /* TIMER6 is on APB1. Its clock multiplier depends on TIMERSEL. */
+        unsigned int prescaler = (RCU_CFG0 & RCU_CFG0_APB1PSC) >> 10;
+        unsigned int apb_div = prescaler < 4 ? 1U : 2U << (prescaler - 4);
+        unsigned int timer_mul = (RCU_CFG1 & RCU_CFG1_TIMERSEL) ? 4U : 2U;
+        uint32_t timer_hz = SystemCoreClock / (apb_div > timer_mul ? apb_div / timer_mul : 1U);
+        uint32_t divider = (timer_hz + 999999U) / 1000000U;
+        tone_timer_hz = timer_hz / divider;
+
+        RCU_APB1EN |= RCU_APB1EN_TIMER6EN;
+        (void)RCU_APB1EN;
+        TIMER_CTL0(TIMER6) = TIMER_CTL0_ARSE;
+        TIMER_PSC(TIMER6) = divider - 1;
+        NVIC_SetPriority(TIMER6_IRQn, 8);
+        NVIC_EnableIRQ(TIMER6_IRQn);
+    }
+
+    if (hz) {
+        TIMER_CAR(TIMER6) = (tone_timer_hz + hz) / (2U * hz) - 1;
+        if (!tone_hz) {
+            uint32_t interrupt_mask = __get_PRIMASK();
+            __disable_irq();
+            beep_remaining = 0;
+            tone_high = false;
+            GPIO_BOP(GPIOF) = BEEPER_PIN << 16;
+            TIMER_SWEVG(TIMER6) = TIMER_SWEVG_UPG;
+            TIMER_INTF(TIMER6) = 0;
+            TIMER_DMAINTEN(TIMER6) = TIMER_DMAINTEN_UPIE;
+            TIMER_CTL0(TIMER6) |= TIMER_CTL0_CEN;
+            __set_PRIMASK(interrupt_mask);
+        }
+    } else {
+        TIMER_DMAINTEN(TIMER6) = 0;
+        TIMER_CTL0(TIMER6) &= ~TIMER_CTL0_CEN;
+        NVIC_ClearPendingIRQ(TIMER6_IRQn);
+        GPIO_BOP(GPIOF) = BEEPER_PIN << 16;
+    }
+    tone_hz = hz;
 }
 
 void fixfinder_health_led(int health)

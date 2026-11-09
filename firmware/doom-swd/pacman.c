@@ -24,8 +24,8 @@ enum {
 static struct {
     z80 cpu;
     uint8_t video[1024], colors[1024], ram[1024], pos[16];
-    uint8_t in0, in1, vector;
-    bool irq, flip;
+    uint8_t in0, in1, vector, sound[32];
+    bool irq, flip, sound_enabled;
 } board __attribute__((section(".arcade_art")));
 static uint8_t rgb[768] __attribute__((section(".arcade_art")));
 
@@ -53,8 +53,31 @@ static void bus_write(void *state, uint16_t addr, uint8_t value)
     else if (addr<0x4800) board.colors[addr-0x4400]=value;
     else if (addr>=0x4c00 && addr<0x5000) board.ram[addr-0x4c00]=value;
     else if (addr==0x5000) board.irq=value&1;
+    else if (addr==0x5001) board.sound_enabled=value&1;
     else if (addr==0x5003) board.flip=value&1;
+    else if (addr>=0x5040 && addr<0x5060) board.sound[addr-0x5040]=value&15;
     else if (addr>=0x5060 && addr<0x5070) board.pos[addr-0x5060]=value;
+}
+
+static uint32_t beeper_pitch(void)
+{
+    if (!board.sound_enabled) return 0;
+
+    /* The beeper plays the loudest active Namco voice as a square wave. */
+    unsigned int volume=0;
+    uint32_t pitch=0;
+    for (unsigned int voice=0; voice<3; ++voice) {
+        const uint8_t *reg=&board.sound[0x11+5*voice];
+        uint32_t increment=(reg[3]<<16)|(reg[2]<<12)|(reg[1]<<8)|(reg[0]<<4);
+        if (!voice) increment|=board.sound[0x10];
+        /* A 20-bit phase accumulator clocked at 96 kHz. */
+        uint32_t hz=(increment*375U+2048U)>>12;
+        if (hz>=80 && reg[4]>volume) {
+            volume=reg[4];
+            pitch=hz>4000?4000:hz;
+        }
+    }
+    return pitch;
 }
 
 static uint8_t port_in(z80 *cpu, uint8_t port)
@@ -159,7 +182,10 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
     bool was_start=false, ready=false;
     for (;;) {
         uint32_t now=*clock, keys=fixfinder_keys(now);
-        if (fixfinder_arcade_exit(keys,now)) return;
+        if (fixfinder_arcade_exit(keys,now)) {
+            fixfinder_tone(0);
+            return;
+        }
         bool start=(keys==(KEY_ERASE|KEY_ENTER));
         if (ready && start && !was_start) restart=frames+1;
         was_start=start;
@@ -184,6 +210,7 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
         cycle+=50688;
         while ((int32_t)(board.cpu.cyc-cycle)<0) z80_step(&board.cpu);
         if (board.irq) z80_gen_int(&board.cpu,board.vector);
+        if (ready) fixfinder_tone(beeper_pitch());
         if (ready && !(frames&1)) {
             render(frame);
             doom_usb_video_capture(frame,rgb);
