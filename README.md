@@ -29,7 +29,7 @@ Add `-CompactReciprocal` to build the smaller diagnostic variant. It replaces th
 
 `-BoardSource` enables the game build that sends each frame to an initialized landscape HX8347 transport and reads debounced buttons from the same board implementation used by V9. The board must supply measured GPIO mappings, confirm the controller and provide the `read_buttons` callback in [the board interface](firmware/lcd/v9_board.h). The build emits a separate `FixFinder-Doom-Board.elf`. This path has been exercised with a mock board in Cortex-M4 emulation. See the [LCD bring-up notes](docs/LCD.md) for the outstanding hardware checks.
 
-### Three-map diagnostic
+### Multi-map diagnostic
 
 To retain E1M1 through E1M3 from a local DOOM 1.9 shareware IWAD, use the following sequence from the repository root. Run the converter from its own directory with absolute input and output paths, as for the E1M1 build.
 
@@ -41,7 +41,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-DoomSwd.ps1 -E
 python scripts/Smoke-DoomSwd.py <output-elf> --check-progression
 ```
 
-The progression check triggers each normal level exit directly and uses simulated Fire presses to advance the intermissions. The optional patch compaction shares identical columns within each converted graphic while preserving its dimensions, column order and pixels. The compact three-map board build with the mock driver leaves about 100 KiB of internal flash and was tested in emulation. It omits audio, demos and the remaining map data, including the E1M3 secret exit's destination. The nine-map packed WAD alone is larger than the MCU's internal flash.
+The progression check triggers each normal level exit directly and uses simulated Fire presses to advance the intermissions. The optional patch compaction shares identical columns within each converted graphic while preserving its dimensions, column order and pixels. The compact three-map board build with the mock driver leaves about 100 KiB of internal flash and was tested in emulation.
+
+For a four-map build, use `--maps 4`, add `--compress-setup` during deduplication, and pass `--last-map 4` to the progression check. This uses a FixFinder-specific WAD format for compressed setup data. The build detects it and decodes one temporary map lump at a time into a 21 KiB TCM buffer. Long-lived map data still stays directly accessible in flash. The four-map mock-board image leaves 5,392 bytes of internal flash. Both builds omit audio, demos and the remaining map data, including the E1M3 secret exit's destination. The nine-map packed WAD alone is larger than the MCU's internal flash.
 
 ## Raspberry Pi
 

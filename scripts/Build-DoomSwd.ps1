@@ -25,6 +25,21 @@ if ($wadBytes.Length -lt 12 -or [Text.Encoding]::ASCII.GetString($wadBytes, 0, 4
     [BitConverter]::ToUInt32($wadBytes, 8) -ne 12) {
     throw 'Convert the reduced IWAD with the pinned GBADoom GbaWadUtil before linking.'
 }
+$lumpCount = [BitConverter]::ToUInt32($wadBytes, 4)
+if ($lumpCount -gt [Math]::Floor(($wadBytes.Length - 12) / 16)) {
+    throw 'Converted IWAD directory extends past the file.'
+}
+$packedSetup = $false
+for ($i = 0; $i -lt $lumpCount; $i++) {
+    $entry = 12 + 16 * $i
+    if ([BitConverter]::ToInt32($wadBytes, $entry) -lt 0) {
+        $name = [Text.Encoding]::ASCII.GetString($wadBytes, $entry + 8, 8).TrimEnd([char]0)
+        if ($name -cnotin 'THINGS', 'SIDEDEFS', 'SSECTORS', 'SECTORS') {
+            throw "Packed data is only supported for setup lumps. Unexpected lump $name."
+        }
+        $packedSetup = $true
+    }
+}
 
 function Invoke-Gcc([string[]]$Arguments) {
     & (Join-Path $toolchain 'arm-none-eabi-gcc.exe') @arch @Arguments
@@ -33,12 +48,11 @@ function Invoke-Gcc([string[]]$Arguments) {
     }
 }
 
-function Replace-EngineSource([string]$Name, [string]$Pattern, [string]$Replacement) {
+function Replace-EngineSource([string]$Name, [string]$Pattern, [string]$Replacement, [int]$Count = 1) {
     $original = Get-Content -LiteralPath (Join-Path $source "source/$Name.c") -Raw
     $matches = [regex]::Matches($original, $Pattern)
-    if ($matches.Count -ne 1) { throw "Unexpected source layout in $Name.c." }
-    $match = $matches[0]
-    $modified = $original.Remove($match.Index, $match.Length).Insert($match.Index, $Replacement)
+    if ($matches.Count -ne $Count) { throw "Unexpected source layout in $Name.c." }
+    $modified = [regex]::Replace($original, $Pattern, $Replacement)
     $copy = Join-Path $build "$Name.c"
     Set-Content -LiteralPath $copy -Value $modified -NoNewline -Encoding ascii
     Invoke-Gcc ($engineFlags + @('-c', $copy, '-o', (Join-Path $build "$Name.o")))
@@ -66,6 +80,15 @@ char key[8] = {0};
             if (memcmp(key, fileinfo[i].name, sizeof(key)) == 0)
 '@
     Replace-EngineSource z_zone 'maxHeapSize = \(256 \* 1024\);' 'maxHeapSize = (144 * 1024);'
+    $replacements = @('d_main.o', 'w_wad.o', 'z_zone.o')
+    if ($packedSetup) {
+        $engineFlags += '-include', 'firmware/doom-swd/setup_wad.h'
+        $pattern = '(?s)(static void P_Load(?:Subsectors|Sectors|Things|SideDefs2)\s*\(int lump\)\s*\{[^}]*?)W_CacheLumpNum'
+        Replace-EngineSource p_setup $pattern '${1}W_LoadSetupLump' 4
+        Invoke-Gcc ($engineFlags + @('-c', 'firmware/doom-swd/setup_wad.c',
+            '-o', (Join-Path $build 'setup_wad.o')))
+        $replacements += 'p_setup.o'
+    }
 
     $sdk = 'GD32F4xx_Firmware_Library/Firmware'
     $usb = "$sdk/GD32F4xx_usb_library"
@@ -114,10 +137,11 @@ doom_iwad_len:
     $objects = @(Get-ChildItem -LiteralPath $v8 -Filter 'part_*.o' |
         Where-Object Name -ne 'part_1.o' | ForEach-Object FullName)
     $objects += @(Get-ChildItem -LiteralPath $engine -Filter '*.o' |
-        Where-Object Name -notin 'engine.o', 'd_main.o', 'w_wad.o', 'z_zone.o' | ForEach-Object FullName)
+        Where-Object { $_.Name -ne 'engine.o' -and $_.Name -notin $replacements } | ForEach-Object FullName)
     $objects += $app, $runtime, $display, $wadObject
     $objects += $boardObjects
-    $objects += @('d_main.o', 'w_wad.o', 'z_zone.o') | ForEach-Object { Join-Path $build $_ }
+    $objects += $replacements | ForEach-Object { Join-Path $build $_ }
+    if ($packedSetup) { $objects += Join-Path $build 'setup_wad.o' }
 
     $name = if ($board) { 'FixFinder-Doom-Board' } else { 'FixFinder-Doom-SWD' }
     $elf = Join-Path $build "$name.elf"

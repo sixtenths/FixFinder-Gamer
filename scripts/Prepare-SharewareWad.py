@@ -15,6 +15,9 @@ MAP_LUMPS = (
     b"THINGS", b"LINEDEFS", b"SIDEDEFS", b"VERTEXES", b"SEGS",
     b"SSECTORS", b"NODES", b"SECTORS", b"REJECT", b"BLOCKMAP",
 )
+SETUP_LUMPS = {b"THINGS", b"SIDEDEFS", b"SSECTORS", b"SECTORS"}
+SETUP_CAPACITY = 21 * 1024
+PACKED_SETUP = 1 << 31
 # Texture animation intervals from the pinned engine's p_spec.c.
 ANIMATIONS = (
     (b"BLODGR1", b"BLODGR4"), (b"SLADRIP1", b"SLADRIP3"),
@@ -143,7 +146,44 @@ def compact_patch(payload):
     return bytes(compact) if len(compact) < len(payload) else payload
 
 
-def deduplicate_converted(raw, compact_patches=False):
+def pack_setup(payload):
+    """Encode literal runs and backward copies into a setup-only lump."""
+    encoded = bytearray()
+    matches = {}
+    cursor = literal = 0
+
+    def emit_literals(end):
+        nonlocal literal
+        while literal < end:
+            length = min(end - literal, 128)
+            encoded.append(length - 1)
+            encoded.extend(payload[literal:literal + length])
+            literal += length
+
+    while cursor + 4 <= len(payload):
+        key = payload[cursor:cursor + 4]
+        previous = matches.get(key)
+        matches[key] = cursor
+        if previous is None:
+            cursor += 1
+            continue
+        length = 4
+        limit = min(len(payload) - cursor, 130)
+        while length < limit and payload[cursor + length] == payload[previous + length]:
+            length += 1
+        emit_literals(cursor)
+        encoded.append(0x80 | (length - 3))
+        encoded.extend(struct.pack("<H", cursor - previous))
+        end = cursor + length
+        for position in range(cursor + 1, end):
+            matches[payload[position:position + 4]] = position
+        cursor = literal = end
+
+    emit_literals(len(payload))
+    return struct.pack("<I", len(encoded)) + encoded
+
+
+def deduplicate_converted(raw, compact_patches=False, compress_setup=False):
     magic, count, directory = HEADER.unpack_from(raw)
     data_start = directory + count * ENTRY.size
     if magic != b"IWAD" or directory != HEADER.size or data_start > len(raw):
@@ -164,6 +204,12 @@ def deduplicate_converted(raw, compact_patches=False):
         if offset < data_start or offset + size > len(raw):
             raise ValueError(f"Lump outside WAD data: {name8(name)!r}")
         payload = raw[offset:offset + size]
+        packed = 0
+        if compress_setup and lump_name in SETUP_LUMPS and size <= SETUP_CAPACITY:
+            compressed = pack_setup(payload)
+            if len(compressed) < size:
+                payload = bytes(compressed)
+                packed = PACKED_SETUP
         if compact_patches and (
             (patch_section and lump_name != b"PNAMES")
             or lump_name in (b"M_ARUN", b"M_GAMMA")
@@ -177,7 +223,9 @@ def deduplicate_converted(raw, compact_patches=False):
             output += b"\0" * (-len(output) % 4)
             locations[payload] = len(output)
             output += payload
-        ENTRY.pack_into(output, directory + i * ENTRY.size, locations[payload], len(payload), name)
+        unpacked_size = size if packed else len(payload)
+        ENTRY.pack_into(output, directory + i * ENTRY.size,
+                        locations[payload] | packed, unpacked_size, name)
     return output
 
 
@@ -191,15 +239,17 @@ def main():
                       help="Share identical lump bytes after GbaWadUtil conversion")
     parser.add_argument("--compact-patches", action="store_true",
                         help="Also share identical pixel columns within converted shareware patches")
+    parser.add_argument("--compress-setup", action="store_true",
+                        help="Compress setup-only lumps for the FixFinder loader")
     args = parser.parse_args()
     if args.input.resolve() == args.output.resolve():
         parser.error("Choose a separate output path for the reduced IWAD")
-    if args.compact_patches and not args.deduplicate_converted:
-        parser.error("--compact-patches requires --deduplicate-converted")
+    if (args.compact_patches or args.compress_setup) and not args.deduplicate_converted:
+        parser.error("--compact-patches and --compress-setup require --deduplicate-converted")
     try:
         raw = args.input.read_bytes()
         if args.deduplicate_converted:
-            reduced = deduplicate_converted(raw, args.compact_patches)
+            reduced = deduplicate_converted(raw, args.compact_patches, args.compress_setup)
             message = f"Deduplicated converted IWAD ({len(raw) - len(reduced):,} bytes saved)"
         else:
             reduced = reduce_iwad(raw, args.maps)

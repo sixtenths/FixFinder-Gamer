@@ -17,7 +17,7 @@ FIST = 0
 PISTOL = 1
 
 
-def smoke_test(path, frame_output, check_progression, check_weapon_cycle):
+def smoke_test(path, frame_output, last_map, check_weapon_cycle):
     cpu = Uc(UC_ARCH_ARM, UC_MODE_THUMB | UC_MODE_MCLASS)
     for address, size in (
         (0x08000000, 3 << 20), (0x10000000, 64 << 10), (0x20000000, 192 << 10),
@@ -134,7 +134,7 @@ def smoke_test(path, frame_output, check_progression, check_weapon_cycle):
 
     cpu.hook_add(UC_HOOK_BLOCK, tick)
     hooks = [("I_FinishUpdate_e32", capture_frame), ("doom_lcd_write_row", check_row)]
-    if check_progression:
+    if last_map is not None:
         # Install before Unicorn translates either engine function.
         hooks.extend((("P_SetupLevel", level_setup), ("WI_Start", start_intermission)))
     for symbol, callback in hooks:
@@ -193,8 +193,8 @@ def smoke_test(path, frame_output, check_progression, check_weapon_cycle):
             print(description)
         weapon_cycle_start = None
 
-    if check_progression:
-        for next_map in (2, 3):
+    if last_map is not None:
+        for next_map in range(2, last_map + 1):
             intermission_start = None
             cpu.mem_write(symbols["doom_test_buttons"], pack("<I", 0))
             # Trigger the engine's normal exit path without walking the level.
@@ -221,8 +221,11 @@ if __name__ == "__main__":
     parser.add_argument("elf", help="ELF produced by Build-DoomSwd.ps1")
     parser.add_argument("--frame-output", type=Path, help="Write the verified RGB565 frame as a PPM")
     parser.add_argument("--check-progression", action="store_true",
-                        help="Check intermission and level transitions in an E1M1–E1M3 build")
+                        help="Check intermission and level transitions through the last map")
+    parser.add_argument("--last-map", type=int, choices=range(2, 9), default=3,
+                        help="Last map for --check-progression (default: 3)")
     parser.add_argument("--check-weapon-cycle", action="store_true",
                         help="Check the in-game weapon-cycle chord in a current build")
     args = parser.parse_args()
-    smoke_test(args.elf, args.frame_output, args.check_progression, args.check_weapon_cycle)
+    smoke_test(args.elf, args.frame_output,
+               args.last_map if args.check_progression else None, args.check_weapon_cycle)
