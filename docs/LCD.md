@@ -25,3 +25,7 @@ After establishing orientation and connector correspondence, test LCD contact 28
 ## V9 first hardware check
 
 Confirm interface straps, reset, command/data, chip select, bus direction, supply and backlight circuit before driving outputs. If the controller is still unknown after wiring is confirmed, an ID transaction requires approval as a hardware-control experiment. Start the diagnostic from the V8 USBHS code path. Initialize the confirmed controller, fill a single color without allocating a framebuffer, then cycle red, green, blue, white and black. Verify HID enumeration and reset behavior before adding text or inputs.
+
+The candidate HX8347 register layer in `firmware/lcd/hx8347.c` is ready for a verified board transport. It checks two page-zero ID reads for consistency, programs the inclusive window registers `0x02` through `0x09`, and streams RGB565 to GRAM `0x22`. The board transport is responsible for reset, power sequencing, lane mapping, chip select and bus turnaround. The register layer stays separate from the current firmware build while those details are open.
+
+Run `python scripts/Check-LcdProtocol.py` with the same Unicorn and pyelftools dependencies as the DOOM smoke test. The mock bus verifies portrait and landscape bounds, the complete 76,800-pixel fills, rejection of inconsistent and all-low/all-high ID readings, and closure of the pixel stream on a transfer failure.
