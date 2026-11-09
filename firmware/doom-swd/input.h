@@ -10,7 +10,9 @@ enum doom_button {
     DOOM_BUTTON_FIRE = 1U << 4,
     DOOM_BUTTON_USE = 1U << 5,
     DOOM_BUTTON_MENU = 1U << 6,
-    DOOM_BUTTON_MAP = 1U << 7
+    DOOM_BUTTON_MAP = 1U << 7,
+    DOOM_BUTTON_STRAFE_LEFT = 1U << 8,
+    DOOM_BUTTON_STRAFE_RIGHT = 1U << 9
 };
 
 #endif

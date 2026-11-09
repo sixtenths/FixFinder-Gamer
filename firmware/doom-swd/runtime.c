@@ -29,6 +29,7 @@ volatile uint32_t doom_test_buttons;
 volatile int32_t doom_player_x;
 volatile int32_t doom_player_y;
 volatile int32_t doom_player_bullets;
+volatile uint32_t doom_player_weapon;
 char doom_error[160];
 static uint16_t doom_frame[SCREENWIDTH * SCREENHEIGHT]
     __attribute__((section(".doom_frame")));
@@ -99,6 +100,8 @@ void I_ProcessKeyEvents(void)
         { DOOM_BUTTON_USE, KEYD_A },
         { DOOM_BUTTON_MENU, KEYD_START },
         { DOOM_BUTTON_MAP, KEYD_SELECT },
+        { DOOM_BUTTON_STRAFE_LEFT, KEYD_L },
+        { DOOM_BUTTON_STRAFE_RIGHT, KEYD_R },
     };
     static uint32_t previous;
     const uint32_t pressed = doom_test_buttons;
@@ -140,6 +143,7 @@ void I_FinishUpdate_e32(const byte *frame, const byte *palette,
         doom_player_x = _g->player.mo->x;
         doom_player_y = _g->player.mo->y;
         doom_player_bullets = _g->player.ammo[am_clip];
+        doom_player_weapon = _g->player.readyweapon;
         doom_level_frames++;
     }
     doom_frames++;

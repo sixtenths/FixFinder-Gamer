@@ -10,9 +10,14 @@ from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_AR
 
 FORWARD = 1 << 0
 FIRE = 1 << 4
+USE = 1 << 5
+STRAFE_LEFT = 1 << 8
+STRAFE_RIGHT = 1 << 9
+FIST = 0
+PISTOL = 1
 
 
-def smoke_test(path, frame_output, check_progression):
+def smoke_test(path, frame_output, check_progression, check_weapon_cycle):
     cpu = Uc(UC_ARCH_ARM, UC_MODE_THUMB | UC_MODE_MCLASS)
     for address, size in (
         (0x08000000, 3 << 20), (0x10000000, 64 << 10), (0x20000000, 192 << 10),
@@ -48,6 +53,7 @@ def smoke_test(path, frame_output, check_progression):
     next_map = 0
     map_start_frame = 0
     intermission_start = None
+    weapon_cycle_start = None
 
     def level_setup(uc, _address, _size, _data):
         nonlocal active_map, map_start_frame
@@ -106,6 +112,13 @@ def smoke_test(path, frame_output, check_progression):
             return
 
         frames = read_word("doom_level_frames")
+        if weapon_cycle_start is not None:
+            elapsed = frames - weapon_cycle_start
+            if elapsed >= 2:
+                uc.mem_write(symbols["doom_test_buttons"], pack("<I", 0))
+            if elapsed >= 16:
+                uc.emu_stop()
+            return
         if frames >= 10 and starting_position is None:
             starting_position = position()
             starting_hash = read_word("doom_frame_hash")
@@ -164,6 +177,22 @@ def smoke_test(path, frame_output, check_progression):
                             (pixel & 31) * 255 // 31))
         frame_output.write_bytes(b"P6\n320 240\n255\n" + rgb)
 
+    if check_weapon_cycle:
+        if read_word("doom_player_weapon") != PISTOL:
+            raise SystemExit("Expected the player to start with the pistol")
+        for action, weapon, description in (
+            (STRAFE_LEFT, FIST, "Use + Strafe Left switched from pistol to fist"),
+            (STRAFE_RIGHT, PISTOL, "Use + Strafe Right switched from fist to pistol"),
+        ):
+            weapon_cycle_start = read_word("doom_level_frames")
+            cpu.mem_write(symbols["doom_test_buttons"], pack("<I", USE | action))
+            cpu.emu_start(cpu.reg_read(UC_ARM_REG_PC) | 1, 0, timeout=20_000_000)
+            if (read_word("doom_level_frames") < weapon_cycle_start + 16 or
+                    read_word("doom_player_weapon") != weapon):
+                raise SystemExit(f"Weapon-cycle check failed for action mask {action:#x}")
+            print(description)
+        weapon_cycle_start = None
+
     if check_progression:
         for next_map in (2, 3):
             intermission_start = None
@@ -193,5 +222,7 @@ if __name__ == "__main__":
     parser.add_argument("--frame-output", type=Path, help="Write the verified RGB565 frame as a PPM")
     parser.add_argument("--check-progression", action="store_true",
                         help="Check intermission and level transitions in an E1M1–E1M3 build")
+    parser.add_argument("--check-weapon-cycle", action="store_true",
+                        help="Check the in-game weapon-cycle chord in a current build")
     args = parser.parse_args()
-    smoke_test(args.elf, args.frame_output, args.check_progression)
+    smoke_test(args.elf, args.frame_output, args.check_progression, args.check_weapon_cycle)
