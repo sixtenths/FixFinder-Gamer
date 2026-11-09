@@ -1,6 +1,6 @@
 # FixFinder DOOM
 
-Play DOOM E1M1 on a modified AutoZone FixFinder 5034VSM using the built-in LCD, buttons, health LEDs, and beeper. On power-up the resident loader shows HackerZone, the DOOM logo, and a progress bar, then starts the game.
+Play DOOM E1M1 on a modified AutoZone FixFinder 5034VSM using the built-in LCD, buttons, health LEDs, and beeper. On power-up the resident loader shows HackerZone, “BOOTING,” and a progress bar, then starts the game.
 
 | DOOM running on the FixFinder | Earlier startup splash |
 | :---: | :---: |

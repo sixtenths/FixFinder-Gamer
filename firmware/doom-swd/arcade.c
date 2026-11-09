@@ -294,7 +294,7 @@ static void snake(uint8_t *frame, const volatile uint32_t *clock)
 }
 
 #ifdef FIXFINDER_PACMAN
-void fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock);
+bool fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock);
 #else
 /* A compact original maze. Spaces are traversable and dots are collectible. */
 static const char maze_map[][22] = {
@@ -632,6 +632,9 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
     unsigned int total=GAME_COUNT;
 #ifdef FIXFINDER_EMMC_LIBRARY
     total+=fixfinder_library_init();
+#ifdef FIXFINDER_PACMAN_EMMC
+    (void)fixfinder_library_read_pacman(frame, PACMAN_ROM_SIZE);
+#endif
 #endif
     uint32_t previous=KEY_BACK|KEY_DOWN|KEY_ENTER|KEY_ERASE;
     memcpy(palette,base_palette,sizeof palette);
@@ -640,11 +643,18 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
     unpack_art(wordmark,sizeof wordmark,logo_data);
     unpack_art(doom_art,sizeof doom_art,doom_logo_data);
     doom_display_set_palette(palette);
+    bool redraw = true;
     for (;;) {
         uint32_t now=*clock, keys=fixfinder_keys(now);
         if (keys!=previous) {
-            if (keys==KEY_ERASE) selected=(selected+total-1)%total;
-            if (keys==KEY_DOWN) selected=(selected+1)%total;
+            if (keys==KEY_ERASE) {
+                selected=(selected+total-1)%total;
+                redraw = true;
+            }
+            if (keys==KEY_DOWN) {
+                selected=(selected+1)%total;
+                redraw = true;
+            }
             if (keys==KEY_ENTER && previous==0) {
 #ifdef FIXFINDER_EMMC_LIBRARY
                 if (selected>=GAME_COUNT) {
@@ -669,7 +679,12 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                 case SNAKE: snake(frame,clock); break;
                 case MAZE:
 #ifdef FIXFINDER_PACMAN
-                    fixfinder_pacman_run(frame,clock);
+                    if (!fixfinder_pacman_run(frame,clock)) {
+                        doom_display_set_palette(palette);
+                        text(120, 125, "Could not load Pac-Man ROM", &ui_small, RED, PANEL, true);
+                        present(frame);
+                        wait_until(clock,*clock+1200);
+                    }
                     doom_display_set_palette(palette);
 #else
                     maze(frame,clock);
@@ -680,11 +695,17 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                 }
                 }
                 keys=fixfinder_keys(*clock);
+                redraw = true;
             }
             previous=keys;
         }
-        selector(frame,selected,total);
-        present(frame);
-        wait_until(clock,now+32);
+        if (redraw) {
+            selector(frame,selected,total);
+            present(frame);
+            redraw = false;
+        } else {
+            doom_usb_video_capture_rows(preview_row, frame, palette);
+        }
+        wait_until(clock,now+1);
     }
 }

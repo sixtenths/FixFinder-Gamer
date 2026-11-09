@@ -8,9 +8,14 @@
 #include "../lcd/fixfinder_io.h"
 #include "pacman/z80.h"
 #include <string.h>
+#include <stdlib.h>
 
+#ifdef FIXFINDER_PACMAN_EMMC
+#include "game_library.h"
+static const uint8_t *pacman_rom;
+#else
 extern const uint8_t pacman_rom[];
-void fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock);
+#endif
 
 enum {
     W=DOOM_LCD_WIDTH, H=DOOM_LCD_HEIGHT, VIEW=186,
@@ -133,7 +138,7 @@ static void render(uint8_t *frame)
     }
 }
 
-void fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock)
+static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
 {
     memset(&board,0,sizeof board);
     memset(rgb,0,sizeof rgb);
@@ -188,4 +193,23 @@ void fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock)
         if ((int32_t)(*clock-step)>50) step=*clock;
         while ((int32_t)(*clock-step)<0) {}
     }
+}
+
+bool fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock)
+{
+#ifdef FIXFINDER_PACMAN_EMMC
+    uint8_t *rom = malloc(PACMAN_ROM_SIZE);
+    if (!rom) return false;
+    if (!fixfinder_library_read_pacman(rom, PACMAN_ROM_SIZE)) {
+        free(rom);
+        return false;
+    }
+    pacman_rom = rom;
+#endif
+    play_pacman(frame, clock);
+#ifdef FIXFINDER_PACMAN_EMMC
+    pacman_rom = NULL;
+    free(rom);
+#endif
+    return true;
 }

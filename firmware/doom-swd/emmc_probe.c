@@ -6,7 +6,7 @@
 enum { PWR=0, CLK=4, ARG=8, CMD=12, RESP=20, DTIME=36, LEN=40, DATA=44, STAT=52, CLEAR=56, FIFO=128 };
 struct result { uint32_t magic,stage,stat,ocr,cid[4],csd[4],sectors,revision,partition,words;
     uint32_t ext[128],sector0[128],sector1[128],sector_last[128];
-    uint32_t library_stage, library_count; };
+    uint32_t library_stage, library_count, pacman_verified; };
 volatile struct result fixfinder_emmc_result __attribute__((section(".arcade_art")));
 #define out fixfinder_emmc_result
 
@@ -33,8 +33,9 @@ static int cmd(unsigned int n,uint32_t arg,unsigned int response) {
     out.stat=S(STAT);
     return 0;
 }
-static int block(unsigned int command,uint32_t arg,volatile uint32_t *dest) {
+static int read_block_once(unsigned int command,uint32_t arg,volatile uint32_t *dest) {
     S(DATA)=0; S(CLEAR)=0x7ff;
+    for (unsigned int i=0;i<128 && (S(STAT)&(1u<<21));++i) (void)S(FIFO);
     S(DTIME)=2400000; S(LEN)=512; S(DATA)=(9u<<4)|3;
     if (!cmd(command,arg,1)) { S(DATA)=0; return 0; }
     unsigned int count=0,s=0;
@@ -47,6 +48,13 @@ static int block(unsigned int command,uint32_t arg,volatile uint32_t *dest) {
     S(DATA)=0;
     out.words=count; out.stat=s;
     return count==128 && (s&(1u<<8)) && !(s&0x22a);
+}
+static int block(unsigned int command,uint32_t arg,volatile uint32_t *dest) {
+    for (unsigned int attempt=0;attempt<3;++attempt) {
+        if (read_block_once(command,arg,dest)) return 1;
+        delay(200000);
+    }
+    return 0;
 }
 void fixfinder_emmc_probe(void) {
     volatile uint32_t *p=(volatile uint32_t *)&out;
@@ -117,6 +125,11 @@ void fixfinder_library_status(unsigned int stage, unsigned int count)
 {
     out.library_stage=stage;
     out.library_count=count;
+}
+
+void fixfinder_library_pacman_status(bool verified)
+{
+    out.pacman_verified=verified;
 }
 
 int fixfinder_library_write_allowed(void)

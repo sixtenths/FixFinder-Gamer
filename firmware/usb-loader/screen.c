@@ -3,7 +3,6 @@
 #include "drv_usb_hw.h"
 
 #include "screen_art.h"
-#include "doom_logo.h"
 
 #define WIDTH 320
 #define HEIGHT 240
@@ -142,6 +141,7 @@ bool loader_screen_init(void)
 void loader_screen_draw(enum loader_view view, unsigned int percent)
 {
     static const char *const labels[] = {
+        [VIEW_BOOT] = "BOOTING",
         [VIEW_WAIT] = "USB LOADER READY",
         [VIEW_INSTALL] = "INSTALLING GAME",
         [VIEW_VERIFY] = "VERIFYING GAME",
@@ -162,15 +162,8 @@ void loader_screen_draw(enum loader_view view, unsigned int percent)
     }
     if (drawn_view != (int)view) {
         fill(0, 69, WIDTH, HEIGHT - 69, BG);
-        if (view == VIEW_BOOT) {
-#ifndef FIXFINDER_RADIO
-            draw_logo(70, DOOM_LOGO_WIDTH, DOOM_LOGO_HEIGHT, doom_logo_data, doom_logo_palette, 2);
-#endif
-            label(90, 194, "LOADING DOOM", BG);
-        } else {
-            fill(22, 115, 276, 115, CARD);
-            label(36, 147, labels[view], CARD);
-        }
+        fill(22, 115, 276, 115, CARD);
+        label(view == VIEW_BOOT ? 117 : 36, 147, labels[view], CARD);
         fill(36, BAR_Y, 248, 12, TRACK);
         drawn_view = view;
         drawn_width = 0;

@@ -31,30 +31,31 @@ static bool read_exact(FIL *f, void *buffer, unsigned int size)
     return f_read(f,buffer,size,&got)==FR_OK && got==size;
 }
 
+#if defined(FIXFINDER_PROVISION_LIBRARY) || defined(FIXFINDER_PACMAN_SEED)
 #ifdef FIXFINDER_PROVISION_LIBRARY
 extern const uint8_t fixfinder_pack_start[],fixfinder_pack_end[];
-static bool provision(void)
+#endif
+static bool provision(const char *temp, const char *target,
+                      const uint8_t *source, unsigned int size)
 {
-    static const char temp[]="0:/FFARCADE.TMP";
     if (!fixfinder_library_write_allowed()) return false;
     FIL f;
     UINT written=0;
-    unsigned int size=(uintptr_t)fixfinder_pack_end-(uintptr_t)fixfinder_pack_start;
     fixfinder_library_enable_writes(true);
     bool ok=false;
     if (f_open(&f,temp,FA_WRITE|FA_CREATE_NEW)!=FR_OK) goto done;
-    ok=f_write(&f,fixfinder_pack_start,size,&written)==FR_OK && written==size;
+    ok=f_write(&f,source,size,&written)==FR_OK && written==size;
     if (f_close(&f)!=FR_OK) ok=false;
     if (ok && f_open(&f,temp,FA_READ)==FR_OK) {
         uint8_t bytes[256];
         for (unsigned int off=0;off<size && ok;) {
             unsigned int n=size-off<sizeof bytes?size-off:sizeof bytes;
-            ok=read_exact(&f,bytes,n) && !memcmp(bytes,fixfinder_pack_start+off,n);
+            ok=read_exact(&f,bytes,n) && !memcmp(bytes,source+off,n);
             off+=n;
         }
         if (f_close(&f)!=FR_OK) ok=false;
     } else ok=false;
-    if (ok) ok=f_rename(temp,file_name)==FR_OK;
+    if (ok) ok=f_rename(temp,target)==FR_OK;
 done:
     fixfinder_library_enable_writes(false);
     return ok;
@@ -72,7 +73,9 @@ unsigned int fixfinder_library_init(void)
     FIL f;
     rc=f_open(&f,file_name,FA_READ);
 #ifdef FIXFINDER_PROVISION_LIBRARY
-    if (rc==FR_NO_FILE && provision()) rc=f_open(&f,file_name,FA_READ);
+    if (rc==FR_NO_FILE && provision("0:/FFARCADE.TMP",file_name,fixfinder_pack_start,
+        (uintptr_t)fixfinder_pack_end-(uintptr_t)fixfinder_pack_start))
+        rc=f_open(&f,file_name,FA_READ);
 #endif
     if (rc!=FR_OK) {
         fixfinder_library_status(0x200u+rc,0);
@@ -113,6 +116,28 @@ static uint32_t crc32(const uint8_t *p,unsigned int n)
     }
     return ~c;
 }
+
+#ifdef FIXFINDER_PACMAN_EMMC
+bool fixfinder_library_read_pacman(uint8_t *buffer, unsigned int size)
+{
+    extern void fixfinder_library_pacman_status(bool verified);
+    static const char path[]="0:/PACMAN.ROM";
+    fixfinder_library_pacman_status(false);
+    FIL f;
+    FRESULT rc=f_open(&f,path,FA_READ);
+#ifdef FIXFINDER_PACMAN_SEED
+    extern const uint8_t pacman_rom[];
+    if (rc==FR_NO_FILE && provision("0:/PACMAN.TMP",path,pacman_rom,size))
+        rc=f_open(&f,path,FA_READ);
+#endif
+    if (rc!=FR_OK) return false;
+    const bool valid=f_size(&f)==size && read_exact(&f,buffer,size) &&
+                     crc32(buffer,size)==0x9463e1c0U;
+    f_close(&f);
+    fixfinder_library_pacman_status(valid);
+    return valid;
+}
+#endif
 
 bool fixfinder_library_play(unsigned int index,uint8_t *frame,const volatile uint32_t *clock)
 {

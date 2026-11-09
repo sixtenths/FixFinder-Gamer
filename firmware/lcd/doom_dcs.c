@@ -10,6 +10,11 @@ bool doom_dcs_init(void)
         return false;
     }
     start_panel(usb_mdelay, 0xa0);  /* Upright landscape in the FixFinder case. */
+    /* Keep the conservative read timing used to identify the panel.
+       Use a shorter data phase for writes, still longer than the stock setting. */
+    EXMC_SNWTCFG2 = 0x00000f15U;
+    EXMC_SNCTL2 |= EXMC_SNCTL_EXMODEN;
+    __DSB();
     start_backlight();
     return true;
 }

@@ -15,6 +15,7 @@ param(
     [string[]]$PacmanRom,
     [switch]$StorageProbe,
     [switch]$EmmcLibrary,
+    [switch]$PacmanFromEmmc,
     [string]$ProvisionLibrary
 )
 
@@ -24,6 +25,7 @@ if ($Arcade -and (!$UsbGame -or !$FixFinderLcd)) { throw '-Arcade requires -FixF
 if ($PacmanRom -and !$Arcade) { throw '-PacmanRom requires -Arcade.' }
 if ($StorageProbe -and !$Arcade) { throw '-StorageProbe requires -Arcade.' }
 if ($EmmcLibrary -and !$Arcade) { throw '-EmmcLibrary requires -Arcade.' }
+if ($PacmanFromEmmc -and !$EmmcLibrary) { throw '-PacmanFromEmmc requires -EmmcLibrary.' }
 if ($ProvisionLibrary -and !$EmmcLibrary) { throw '-ProvisionLibrary requires -EmmcLibrary.' }
 if ($ProvisionLibrary) { $ProvisionLibrary = (Resolve-Path -LiteralPath $ProvisionLibrary).Path }
 $source = (Resolve-Path -LiteralPath $EngineSource).Path
@@ -136,6 +138,10 @@ char key[8] = {0};
     if ($UsbGame) { $platformFlags += '-DFIXFINDER_USB_GAME', '-DFIXFINDER_USB_VIDEO' }
     if ($Arcade) {
         $platformFlags += '-DFIXFINDER_ARCADE'
+        if ($PacmanFromEmmc) {
+            $platformFlags += '-DFIXFINDER_PACMAN_EMMC'
+            if ($PacmanRom) { $platformFlags += '-DFIXFINDER_PACMAN_SEED' }
+        }
         if ($EmmcLibrary) {
             $platformFlags += '-DFIXFINDER_EMMC_LIBRARY'
             if ($ProvisionLibrary) {
@@ -166,22 +172,24 @@ fixfinder_pack_end:
             Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/emmc_probe.c', '-o', $emmc))
             $boardObjects += $emmc
         }
-        if ($PacmanRom) {
+        if ($PacmanRom -or $PacmanFromEmmc) {
             $platformFlags += '-DFIXFINDER_PACMAN'
-            $packedRom = Join-Path $build 'pacman.rom'
-            & python -B scripts/Pack-PacmanRom.py $packedRom @PacmanRom
-            if ($LASTEXITCODE -ne 0) { throw 'Could not pack Pac-Man ROMs.' }
-            $romSource = Join-Path $build 'pacman-rom.S'
-            $romObject = Join-Path $build 'pacman-rom.o'
-            $romPath = $packedRom.Replace('\', '/')
-            @"
+            if ($PacmanRom) {
+                $packedRom = Join-Path $build 'pacman.rom'
+                & python -B scripts/Pack-PacmanRom.py $packedRom @PacmanRom
+                if ($LASTEXITCODE -ne 0) { throw 'Could not pack Pac-Man ROMs.' }
+                $romSource = Join-Path $build 'pacman-rom.S'
+                $romObject = Join-Path $build 'pacman-rom.o'
+                $romPath = $packedRom.Replace('\', '/')
+                @"
 .section .rodata.pacman_rom,"a",%progbits
 .global pacman_rom
 pacman_rom:
 .incbin "$romPath"
 "@ | Set-Content -LiteralPath $romSource -Encoding ascii
-            Invoke-Gcc @('-c', $romSource, '-o', $romObject)
-            $boardObjects += $romObject
+                Invoke-Gcc @('-c', $romSource, '-o', $romObject)
+                $boardObjects += $romObject
+            }
             foreach ($unit in @('firmware/doom-swd/pacman.c', 'firmware/doom-swd/pacman/z80.c')) {
                 $object = Join-Path $build ((Split-Path -Leaf $unit) + '.o')
                 Invoke-Gcc ($platformFlags + @('-O3', '-c', $unit, '-o', $object))

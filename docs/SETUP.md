@@ -4,7 +4,7 @@ This guide is for the experimental AutoZone FixFinder 5034VSM with a GD32F427ZK,
 
 ## If your scanner already runs DOOM
 
-Unplug its USB cable, wait a few seconds, then reconnect it while watching the screen. The HackerZone wordmark, DOOM logo, and “LOADING DOOM” progress bar appear during the roughly five-second startup window. The game starts automatically. This is the quickest way to replay the splash.
+Unplug its USB cable, wait a few seconds, then reconnect it while watching the screen. The HackerZone wordmark, “BOOTING,” and a progress bar appear during the roughly five-second startup window. The game starts automatically.
 
 | Button or combination | Action |
 | --- | --- |
@@ -156,6 +156,8 @@ $pacman = @('C:\roms\pacman.zip', 'C:\roms\puckman.zip')
 The build verifies the program, graphics, and color ROM checksums against [MAME's Midway manifest](https://github.com/mamedev/mame/blob/master/src/mame/pacman/pacman.cpp). ROM files stay local. Pac-Man auto-starts after its self-test; **Erase + Enter** inserts a coin and starts another game. Steer with the same four keys as Maze Chase. The port emulates the original gameplay and video; the original arcade audio is not implemented.
 
 The USB game slot and the eMMC are separate. With `-Arcade -EmmcLibrary`, the game checks the board's FAT32 eMMC for `FFARCADE.PAK` and adds the pack's games to the selector. This reads the existing filesystem and uses no eMMC writes during gameplay. A missing or unreadable pack leaves the built-in games available.
+
+Add `-PacmanFromEmmc` to load Pac-Man from `PACMAN.ROM` on that same volume. For the first install on scanner 1, combine it with `-PacmanRom $pacman` so the firmware can create and verify the file. Subsequent builds can omit `-PacmanRom` and load the existing file into RAM when Pac-Man starts.
 
 The starter pack uses six games from the [CC0 CHIP-8 Archive](https://github.com/JohnEarnest/chip8Archive/tree/761e3ffc63f43e6a849e80714122feff2afca208), played through [C-Octo](https://github.com/JohnEarnest/c-octo/tree/102994e6166236045a067efa930a88532510e03e).
 

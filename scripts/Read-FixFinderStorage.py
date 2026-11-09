@@ -18,7 +18,7 @@ def main():
         reply = viewer.read_transfer(device, 0xC8)
     finally:
         device.close()
-    data = bytes(reply[768:768 + 2120])
+    data = bytes(reply[768:768 + 2124])
     magic, stage, status, ocr, *words = struct.unpack_from("<16I", data)
     if magic != 0x454D4D43 or not stage & 0x80000000:
         raise SystemExit("No completed eMMC probe reported.")
@@ -31,6 +31,8 @@ def main():
     library_status, games = struct.unpack_from("<II", data, 2112)
     if library_status:
         print(f"FAT32 game pack: status 0x{library_status:03x}, {games} titles")
+    if struct.unpack_from("<I", data, 2120)[0] == 1:
+        print("Pac-Man ROM verified from eMMC")
     for index, name in enumerate(("EXT_CSD", "LBA 0", "LBA 1", "Last LBA")):
         sector = data[64 + index*512:64 + (index+1)*512]
         print(f"{name:8}: {sector[:32].hex(' ')} … {sector[-16:].hex(' ')} "
