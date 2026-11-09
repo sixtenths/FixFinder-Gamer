@@ -2,6 +2,10 @@
 
 Play DOOM E1M1 on a modified AutoZone FixFinder 5034VSM using the built-in LCD, buttons, health LEDs, and beeper. On power-up the resident loader shows the AutoZone and DOOM logos and a progress bar, then starts the game.
 
+| DOOM running on the FixFinder | Startup splash |
+| :---: | :---: |
+| ![DOOM gameplay on the FixFinder LCD with the green health LED lit](docs/photos/fixfinder-doom-gameplay.jpg) | ![AutoZone and DOOM logos above the Loading DOOM progress bar](docs/photos/fixfinder-doom-startup.jpg) |
+
 Start with the [installation and recovery guide](docs/SETUP.md). It covers board identification, first-time SWD programming, preparing the game assets, USB installation, and troubleshooting. If the loader and game are already installed, plug in USB and watch the screen from the moment power comes on. The splash lasts about five seconds.
 
 The verified board is marked `PCB_2L_5034_REVC_TYPEC_20200319` and uses a GD32F427ZK. See the [status log](docs/STATUS.md) and [LCD bring-up notes](docs/LCD.md) for the hardware evidence and earlier diagnostics.
