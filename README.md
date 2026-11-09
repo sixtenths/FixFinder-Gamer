@@ -25,6 +25,8 @@ The linked ELF preserves the V8 USB startup path and keeps counters, an RGB565 f
 
 The diagnostic takes pressed actions from the `doom_test_buttons` word at the address reported by the current ELF. The [action bits](firmware/doom-swd/input.h) map to the engine's directional controls, Fire, Use, Menu and Automap. The runtime sends key events on press and release so multiple actions can remain held together. Physical button wiring remains to be verified.
 
+Add `-CompactReciprocal` to build the smaller diagnostic variant. It replaces the engine's 1 MiB reciprocal lookup table with an equivalent calculation. The regular build is the variant tested on the scanner. The compact build has passed emulation and still needs target timing verification.
+
 ## Raspberry Pi
 
 The deployment script defaults to uploading and checking the archived V8 image in a private staging directory on `zac@pi`. It requires a trusted host key and batch-mode SSH authentication. `-Inspect` separately reads the CPUID, MCU UID and first two vector words over SWD. The expected V8 vectors are `20020000 08001ca1`. SWD access requires non-interactive sudo on the Pi.

@@ -6,7 +6,8 @@ param(
     [Parameter(Mandatory)]
     [string]$ConvertedWad,
 
-    [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin"
+    [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin",
+    [switch]$CompactReciprocal
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,14 +42,16 @@ function Replace-EngineSource([string]$Name, [string]$Pattern, [string]$Replacem
     Invoke-Gcc ($engineFlags + @('-c', $copy, '-o', (Join-Path $build "$Name.o")))
 }
 
-$engine = & "$PSScriptRoot/Check-DoomEngine.ps1" -EngineSource $source -ToolchainBin $toolchain -PassThru
+$engine = & "$PSScriptRoot/Check-DoomEngine.ps1" -EngineSource $source -ToolchainBin $toolchain `
+    -CompactReciprocal:$CompactReciprocal -PassThru
+$engineIncludes = if ($CompactReciprocal) { Join-Path $engine 'include' } else { Join-Path $source 'include' }
 $v8 = & "$PSScriptRoot/Build-V8.ps1" -ToolchainBin $toolchain -PassThru
 New-Item -ItemType Directory -Path $build -Force | Out-Null
 
 Push-Location $root
 try {
     $engineFlags = @('-Os', '-ffunction-sections', '-fdata-sections', '-fno-common',
-        '-DHAVE_CONFIG_H', '-std=gnu23', '-include', 'stdint.h', "-I$source/include",
+        '-DHAVE_CONFIG_H', '-std=gnu23', '-include', 'stdint.h', "-I$engineIncludes",
         '-Wno-incompatible-pointer-types', '-Wno-implicit-function-declaration')
     # A single-map image boots directly into E1M1. Avoid a 64-bit access to the
     # WAD directory, which the converter only aligns to four bytes.
@@ -74,7 +77,7 @@ char key[8] = {0};
     $runtime = Join-Path $build 'runtime.o'
     $display = Join-Path $build 'display.o'
     Invoke-Gcc ($platformFlags + @('-DFIXFINDER_DOOM_SWD', '-c', 'USB-Build-V8/app.c', '-o', $app))
-    Invoke-Gcc ($platformFlags + @('-std=gnu23', "-I$source/include", '-c',
+    Invoke-Gcc ($platformFlags + @('-std=gnu23', "-I$engineIncludes", '-c',
         'firmware/doom-swd/runtime.c', '-o', $runtime))
     Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/display.c', '-o', $display))
 

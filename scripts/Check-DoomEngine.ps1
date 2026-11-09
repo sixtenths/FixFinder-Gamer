@@ -4,7 +4,8 @@ param(
     [string]$EngineSource,
 
     [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin",
-    [switch]$PassThru
+    [switch]$PassThru,
+    [switch]$CompactReciprocal
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,10 +31,26 @@ function Invoke-ArmTool([string]$Name, [string[]]$Arguments) {
 $root = Split-Path -Parent $PSScriptRoot
 $build = Join-Path $root "build/doom-engine-$([guid]::NewGuid())"
 New-Item -ItemType Directory -Path $build -Force | Out-Null
+$includes = Join-Path $source 'include'
+if ($CompactReciprocal) {
+    $includes = Join-Path $build 'include'
+    Copy-Item -LiteralPath (Join-Path $source 'include') -Destination $includes -Recurse
+    Copy-Item -LiteralPath (Join-Path $root 'firmware/doom-swd/compact_reciprocal.h') -Destination $includes
+    $fixedHeader = Join-Path $includes 'm_fixed.h'
+    $original = Get-Content -LiteralPath $fixedHeader -Raw
+    $lookup = 'reciprocalTable[val >> shift]'
+    if ([regex]::Matches($original, [regex]::Escape($lookup)).Count -ne 1) {
+        throw 'Unexpected reciprocal lookup in the pinned engine.'
+    }
+    $modified = $original.Replace('#include "m_recip.h"',
+        "#include `"m_recip.h`"`n#include `"compact_reciprocal.h`"")
+    $modified = $modified.Replace($lookup, 'doom_compact_reciprocal(val >> shift)')
+    Set-Content -LiteralPath $fixedHeader -Value $modified -NoNewline -Encoding ascii
+}
 $arch = @('-mcpu=cortex-m4', '-mthumb')
 $flags = $arch + @(
     '-Os', '-ffunction-sections', '-fdata-sections', '-fno-common',
-    '-DHAVE_CONFIG_H', '-std=gnu23', '-include', 'stdint.h', "-I$source/include",
+    '-DHAVE_CONFIG_H', '-std=gnu23', '-include', 'stdint.h', "-I$includes",
     '-Wno-incompatible-pointer-types', '-Wno-implicit-function-declaration'
 )
 # The platform entry, audio driver and WAD are supplied by the eventual firmware.
