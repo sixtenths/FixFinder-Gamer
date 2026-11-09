@@ -30,3 +30,13 @@ void doom_dcs_present(const uint8_t *frame)
     begin_panel_frame(DOOM_LCD_WIDTH, DOOM_LCD_HEIGHT);
     doom_display_stream(frame, write_row, NULL);
 }
+
+void doom_dcs_begin_native(void)
+{
+    begin_panel_frame(DOOM_LCD_WIDTH, DOOM_LCD_HEIGHT);
+}
+
+void doom_dcs_write_native(unsigned int row, const uint8_t *indices)
+{
+    write_row(NULL, row, doom_display_native_row(indices));
+}

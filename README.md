@@ -8,7 +8,7 @@ Play DOOM E1M1 on a modified AutoZone FixFinder 5034VSM using the built-in LCD, 
 
 Start with the [installation and recovery guide](docs/SETUP.md). It covers board identification, first-time SWD programming, preparing the game assets, USB installation, and troubleshooting. If the loader and game are already installed, plug in USB and watch the screen from the moment power comes on. The splash lasts about five seconds.
 
-The optional [HackerZone Arcade build](docs/SETUP.md#build-and-use-hackerzone-arcade) adds a selector for DOOM, Snake, Maze Chase, Pong, and Breakout. All five fit in one game image. You can substitute the original Midway Pac-Man for Maze Chase by building with local arcade ROMs.
+The optional [HackerZone Arcade build](docs/SETUP.md#build-and-use-hackerzone-arcade) adds a selector for DOOM, Snake, Maze Chase, Pong, and Breakout. You can substitute the original Midway Pac-Man for Maze Chase by building with local arcade ROMs. The selector can also load a six-game CHIP-8 pack from the scanner's FAT32 eMMC.
 
 The verified board is marked `PCB_2L_5034_REVC_TYPEC_20200319` and uses a GD32F427ZK. See the [status log](docs/STATUS.md) and [LCD bring-up notes](docs/LCD.md) for the hardware evidence and earlier diagnostics.
 

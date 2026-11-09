@@ -38,6 +38,9 @@ void doom_usb_video_reset(void)
 
 void doom_usb_video_request(uint8_t command)
 {
+#ifdef FIXFINDER_STORAGE_PROBE
+    if (command != 0xc8U)
+#endif
     if (command != VIDEO_REQUEST &&
         (command < VIDEO_FIRST_BAND || command >= VIDEO_FIRST_BAND + VIDEO_BANDS)) {
         return;
@@ -105,6 +108,14 @@ void doom_usb_video_capture(const uint8_t *frame, const uint8_t *palette)
     __set_PRIMASK(irq);
 
     memcpy(colors, palette, sizeof colors);
+#ifdef FIXFINDER_STORAGE_PROBE
+    if (command == 0xc8U) {
+        extern void fixfinder_emmc_snapshot(uint8_t *dest);
+        memset(top,0,sizeof top);
+        memset(bottom,0,sizeof bottom);
+        fixfinder_emmc_snapshot(top);
+    } else
+#endif
     if (command == VIDEO_REQUEST) {
         for (unsigned int y = 0; y < VIDEO_HEIGHT; ++y) {
             uint8_t *row = (y < VIDEO_HEIGHT / 2 ? top : bottom) +

@@ -10,11 +10,10 @@
 #include <string.h>
 
 extern const uint8_t pacman_rom[];
-void doom_dcs_present(const uint8_t *frame);
 void fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock);
 
 enum {
-    W=DOOM_FRAME_WIDTH, H=DOOM_FRAME_HEIGHT, VIEW=140,
+    W=DOOM_LCD_WIDTH, H=DOOM_LCD_HEIGHT, VIEW=186,
     GFX=0x4000, COLOR=0x6000, LOOKUP=0x6020
 };
 static struct {
@@ -28,6 +27,7 @@ static uint8_t rgb[768] __attribute__((section(".arcade_art")));
 static uint8_t bus_read(void *state, uint16_t addr)
 {
     (void)state;
+    addr &= 0x7fff; /* A15 is unwired on the Midway PCB. */
     if (addr<0x4000) return pacman_rom[addr];
     if (addr<0x4400) return board.video[addr-0x4000];
     if (addr<0x4800) return board.colors[addr-0x4400];
@@ -42,6 +42,7 @@ static uint8_t bus_read(void *state, uint16_t addr)
 static void bus_write(void *state, uint16_t addr, uint8_t value)
 {
     (void)state;
+    addr &= 0x7fff;
     if (addr<0x4000) return;
     if (addr<0x4400) board.video[addr-0x4000]=value;
     else if (addr<0x4800) board.colors[addr-0x4400]=value;
@@ -85,12 +86,15 @@ static unsigned int tile_pen(int nx, int ny)
 static void render(uint8_t *frame)
 {
     static const int sprite_col[]={8,16,24,0};
+    uint8_t line[W]={0};
+    unsigned int preview_y=0;
+    doom_dcs_begin_native();
     for (int y=0; y<H; ++y) {
         int nx=y*288/H;
         if (board.flip) nx=287-nx;
         int nx2=((y+1)*288-1)/H;
         if (board.flip) nx2=287-nx2;
-        uint8_t *out=frame+y*W+(W-VIEW)/2;
+        uint8_t *out=line+(W-VIEW)/2;
         for (int x=0; x<VIEW; ++x) {
             int ny=223-x*224/VIEW;
             int ny2=223-((x+1)*224-1)/VIEW;
@@ -103,8 +107,7 @@ static void render(uint8_t *frame)
             if (!p && nx!=nx2 && ny!=ny2) p=tile_pen(nx2,ny2);
             out[x]=p;
         }
-        if (nx<16 || nx>271) continue;
-        for (int s=7; s>=0; --s) {
+        for (int s=7; nx>=16 && nx<=271 && s>=0; --s) {
             int offs=s*2;
             unsigned int info=board.ram[0x3f0+offs], attr=board.ram[0x3f1+offs];
             int sx=272-board.pos[offs+1], sy=board.pos[offs]-31+(s<3);
@@ -121,6 +124,12 @@ static void render(uint8_t *frame)
                 if (color) out[x]=color;
             }
         }
+        doom_dcs_write_native(y,line);
+        if (preview_y<DOOM_FRAME_HEIGHT && preview_y*H/DOOM_FRAME_HEIGHT==(unsigned int)y) {
+            for (unsigned int x=0; x<DOOM_FRAME_WIDTH; ++x)
+                frame[preview_y*DOOM_FRAME_WIDTH+x]=line[x*W/DOOM_FRAME_WIDTH];
+            ++preview_y;
+        }
     }
 }
 
@@ -128,7 +137,7 @@ void fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock)
 {
     memset(&board,0,sizeof board);
     memset(rgb,0,sizeof rgb);
-    memset(frame,0,W*H);
+    memset(frame,0,DOOM_FRAME_WIDTH*DOOM_FRAME_HEIGHT);
     for (int i=0; i<32; ++i) {
         unsigned int c=pacman_rom[COLOR+i];
         rgb[3*i]=33*(c&1)+71*((c>>1)&1)+151*((c>>2)&1);
@@ -172,7 +181,6 @@ void fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock)
         if (board.irq) z80_gen_int(&board.cpu,board.vector);
         if (ready && !(frames&1)) {
             render(frame);
-            doom_dcs_present(frame);
             doom_usb_video_capture(frame,rgb);
         }
         ++frames;

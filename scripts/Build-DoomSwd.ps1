@@ -12,13 +12,20 @@ param(
     [switch]$FixFinderLcd,
     [switch]$UsbGame,
     [switch]$Arcade,
-    [string[]]$PacmanRom
+    [string[]]$PacmanRom,
+    [switch]$StorageProbe,
+    [switch]$EmmcLibrary,
+    [string]$ProvisionLibrary
 )
 
 $ErrorActionPreference = 'Stop'
 if ($BoardSource -and $FixFinderLcd) { throw 'Select one display backend.' }
 if ($Arcade -and (!$UsbGame -or !$FixFinderLcd)) { throw '-Arcade requires -FixFinderLcd and -UsbGame.' }
 if ($PacmanRom -and !$Arcade) { throw '-PacmanRom requires -Arcade.' }
+if ($StorageProbe -and !$Arcade) { throw '-StorageProbe requires -Arcade.' }
+if ($EmmcLibrary -and !$Arcade) { throw '-EmmcLibrary requires -Arcade.' }
+if ($ProvisionLibrary -and !$EmmcLibrary) { throw '-ProvisionLibrary requires -EmmcLibrary.' }
+if ($ProvisionLibrary) { $ProvisionLibrary = (Resolve-Path -LiteralPath $ProvisionLibrary).Path }
 $source = (Resolve-Path -LiteralPath $EngineSource).Path
 $wad = (Resolve-Path -LiteralPath $ConvertedWad).Path
 $board = if ($BoardSource) { (Resolve-Path -LiteralPath $BoardSource).Path }
@@ -129,6 +136,36 @@ char key[8] = {0};
     if ($UsbGame) { $platformFlags += '-DFIXFINDER_USB_GAME', '-DFIXFINDER_USB_VIDEO' }
     if ($Arcade) {
         $platformFlags += '-DFIXFINDER_ARCADE'
+        if ($EmmcLibrary) {
+            $platformFlags += '-DFIXFINDER_EMMC_LIBRARY'
+            if ($ProvisionLibrary) {
+                $platformFlags += '-DFIXFINDER_PROVISION_LIBRARY'
+                $packSource = Join-Path $build 'library-pack.S'
+                $packObject = Join-Path $build 'library-pack.o'
+                $packPath = $ProvisionLibrary.Replace('\', '/')
+                @"
+.section .rodata.fixfinder_pack,"a",%progbits
+.global fixfinder_pack_start
+.global fixfinder_pack_end
+fixfinder_pack_start:
+.incbin "$packPath"
+fixfinder_pack_end:
+"@ | Set-Content -LiteralPath $packSource -Encoding ascii
+                Invoke-Gcc @('-c', $packSource, '-o', $packObject)
+                $boardObjects += $packObject
+            }
+            foreach ($unit in @('firmware/doom-swd/game_library.c', 'firmware/doom-swd/storage/ff.c')) {
+                $object = Join-Path $build ((Split-Path -Leaf $unit) + '.o')
+                Invoke-Gcc ($platformFlags + @('-c', $unit, '-o', $object))
+                $boardObjects += $object
+            }
+        }
+        if ($StorageProbe -or $EmmcLibrary) {
+            $platformFlags += '-DFIXFINDER_STORAGE_PROBE'
+            $emmc = Join-Path $build 'emmc-probe.o'
+            Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/emmc_probe.c', '-o', $emmc))
+            $boardObjects += $emmc
+        }
         if ($PacmanRom) {
             $platformFlags += '-DFIXFINDER_PACMAN'
             $packedRom = Join-Path $build 'pacman.rom'

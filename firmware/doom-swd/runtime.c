@@ -264,6 +264,10 @@ void fixfinder_doom_run(void)
         I_Error("FixFinder LCD ID check failed");
     }
     fixfinder_io_init();
+#ifdef FIXFINDER_STORAGE_PROBE
+    extern void fixfinder_emmc_probe(void);
+    fixfinder_emmc_probe();
+#endif
     fixfinder_beep(90);
 #ifdef FIXFINDER_ARCADE
     fixfinder_arcade_run((uint8_t *)doom_frame, &milliseconds);

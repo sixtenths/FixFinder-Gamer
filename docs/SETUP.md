@@ -155,7 +155,27 @@ $pacman = @('C:\roms\pacman.zip', 'C:\roms\puckman.zip')
 
 The build verifies the program, graphics, and color ROM checksums against [MAME's Midway manifest](https://github.com/mamedev/mame/blob/master/src/mame/pacman/pacman.cpp). ROM files stay local. Pac-Man auto-starts after its self-test; **Erase + Enter** inserts a coin and starts another game. Steer with the same four keys as Maze Chase. The port emulates the original gameplay and video; the original arcade audio is not implemented.
 
-The USB game slot has about 0.55 MiB free with Pac-Man included. The board also has a separate 4 GB eMMC chip, but the game loader has no eMMC driver or game library yet. See the [board and storage notes](STATUS.md#doom-port-and-memory).
+The USB game slot and the eMMC are separate. With `-Arcade -EmmcLibrary`, the game checks the board's FAT32 eMMC for `FFARCADE.PAK` and adds the pack's games to the selector. This reads the existing filesystem and uses no eMMC writes during gameplay. A missing or unreadable pack leaves the built-in games available.
+
+The starter pack uses six games from the [CC0 CHIP-8 Archive](https://github.com/JohnEarnest/chip8Archive/tree/761e3ffc63f43e6a849e80714122feff2afca208), played through [C-Octo](https://github.com/JohnEarnest/c-octo/tree/102994e6166236045a067efa930a88532510e03e).
+
+```powershell
+git clone https://github.com/JohnEarnest/chip8Archive.git build/chip8Archive
+git -C build/chip8Archive checkout 761e3ffc63f43e6a849e80714122feff2afca208
+python scripts/Pack-FixFinderLibrary.py build/chip8Archive build/fixfinder-library.bin
+```
+
+The experimental provision build takes `-ProvisionLibrary build/fixfinder-library.bin` in addition to `-EmmcLibrary`. Its write path is locked to the measured MCU and eMMC on scanner 1. It creates a temporary FAT32 file, verifies its bytes, and renames it to `FFARCADE.PAK`. It does not replace an existing file. Leave power on during installation. For an already provisioned device, omit `-ProvisionLibrary` when rebuilding.
+
+| Bonus game | Controls |
+| --- | --- |
+| Dino Run | Press any face button to jump. |
+| Flight Runner and Danm8ku | Erase, Down, Back, and Enter steer up, down, left, and right. |
+| Down 8 | Back and Enter move left and right; Erase jumps. |
+| Tick | Press a face button to hit the beat. |
+| Cave Explorer | Back and Enter move left and right; Erase acts; Down resets the level. |
+
+Hold **Down + Back** to leave any bonus game. `python scripts/Read-FixFinderStorage.py --serial $serial` reports the eMMC capacity, the probe stage, and the number of games registered from the pack when the viewer is closed.
 
 ## Troubleshoot installation
 

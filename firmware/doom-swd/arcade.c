@@ -1,4 +1,7 @@
 #include "arcade.h"
+#ifdef FIXFINDER_EMMC_LIBRARY
+#include "game_library.h"
+#endif
 #include "display.h"
 #include "usb_video.h"
 #include "../lcd/fixfinder_io.h"
@@ -405,14 +408,19 @@ static void title(uint8_t *frame, int center, int y, const char *name)
 {
     int width=0;
     for (const char *s=name; *s; ++s) {
-        unsigned int w=*s==' '?0:large_width[*s-'A'];
+        unsigned int w=*s>='A'&&*s<='Z'?large_width[*s-'A']:0;
         width+=*s==' '?5:w?w+1:12;
+    }
+    if (width>W-16) {
+        text(frame,center-((int)strlen(name)*6-1)/2,y+3,name,1,WHITE);
+        return;
     }
     int x=center-width/2;
     static const uint8_t shades[]={PANEL,GLYPH_LOW,GLYPH_HIGH,WHITE};
     for (; *name; ++name) {
         if (*name==' ') { x+=5; continue; }
-        int letter=*name-'A', w=large_width[letter];
+        int letter=*name>='0'&&*name<='9'?26+*name-'0':*name-'A';
+        int w=letter<26?large_width[letter]:0;
         if (!w) {
             /* The loader's subset has no Q or Z. Scale the matching small glyph. */
             for (int row=0; row<(int)LARGE_HEIGHT; ++row)
@@ -525,45 +533,57 @@ static void splash(uint8_t *frame, const volatile uint32_t *clock, enum game_id 
     } while (*clock-start<LOAD_MS);
 }
 
-static void selector(uint8_t *frame, unsigned int selected)
+static void selector(uint8_t *frame, unsigned int selected, unsigned int total)
 {
-    header(frame);
-    for (unsigned int i=0;i<GAME_COUNT;++i) {
-        int y=34+(int)i*19;
-        bool active=i==selected;
-        box(frame,10,y,106,16,active?PANEL:INSET);
-        box(frame,10,y,2,16,active?games[i].color:EDGE);
-        text(frame,17,y+5,games[i].name,1,active?WHITE:MUTED);
-        if (active) {
-            box(frame,103,y+5,2,6,games[i].color);
-            box(frame,105,y+6,2,4,games[i].color);
-            box(frame,107,y+7,1,2,games[i].color);
-        }
+    memset(frame,BG,W*H);
+    art(frame,12,8,116,10,LOGO_WIDTH,LOGO_HEIGHT,wordmark,BRAND,16,BG);
+    text(frame,176,9,"ARCADE",1,WHITE);
+    uint8_t accent=selected<GAME_COUNT?games[selected].color:GREEN;
+    const char *name=selected<GAME_COUNT?games[selected].name:"";
+    const char *genre=selected<GAME_COUNT?games[selected].genre:"CHIP 8";
+#ifdef FIXFINDER_EMMC_LIBRARY
+    if (selected>=GAME_COUNT) name=fixfinder_library_title(selected-GAME_COUNT);
+#endif
+    box(frame,0,26,W,96,PANEL);
+    box(frame,0,26,W,1,EDGE);
+    box(frame,0,121,W,1,EDGE);
+    box(frame,35,37,1,73,EDGE);
+    box(frame,204,37,1,73,EDGE);
+    for (int i=0;i<6;++i) {
+        box(frame,15+i,74-i,2,2,MUTED);
+        box(frame,15+i,74+i,2,2,MUTED);
+        box(frame,223-i,74-i,2,2,MUTED);
+        box(frame,223-i,74+i,2,2,MUTED);
     }
-    box(frame,123,34,107,92,PANEL);
-    box(frame,123,34,107,2,games[selected].color);
-    box(frame,129,40,95,54,INSET);
-    illustration(frame,137,42,selected);
-    centered(frame,176,99,games[selected].genre,games[selected].color);
-    char page[]="1 OF 5";
-    page[0]+=(char)selected;
-    centered(frame,176,113,page,MUTED);
-
-    box(frame,10,134,220,1,EDGE);
-    box(frame,10,141,34,13,PANEL);
-    text(frame,12,144,"ERASE",1,WHITE);
-    text(frame,49,144,"UP",1,MUTED);
-    box(frame,74,141,28,13,PANEL);
-    text(frame,77,144,"DOWN",1,WHITE);
-    text(frame,108,144,"NEXT",1,MUTED);
-    box(frame,154,141,34,13,ORANGE);
-    text(frame,157,144,"ENTER",1,BG);
-    text(frame,196,144,"PLAY",1,WHITE);
+    if (selected==DOOM) {
+        art(frame,74,30,92,56,DOOM_LOGO_WIDTH,DOOM_LOGO_HEIGHT,doom_art,DOOM_ART,13,PANEL);
+    } else if (selected<GAME_COUNT) {
+        illustration(frame,80,34,selected);
+    } else {
+        box(frame,101,44,38,32,INSET);
+        for (int pin=0;pin<5;++pin) {
+            box(frame,96,47+pin*6,5,2,GREEN);
+            box(frame,139,47+pin*6,5,2,GREEN);
+        }
+        centered(frame,120,57,"8 BIT",GREEN);
+    }
+    title(frame,120,89,name);
+    centered(frame,120,108,genre,accent);
+    for (unsigned int i=0;i<total;++i)
+        box(frame,120-(total*10-4)/2+i*10,129,6,3,i==selected?accent:EDGE);
+    text(frame,12,146,"ERASE PREV",1,MUTED);
+    text(frame,92,146,"DOWN NEXT",1,MUTED);
+    box(frame,166,140,62,17,accent);
+    centered(frame,197,145,"ENTER PLAY",BG);
 }
 
 void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
 {
     unsigned int selected=0;
+    unsigned int total=GAME_COUNT;
+#ifdef FIXFINDER_EMMC_LIBRARY
+    total+=fixfinder_library_init();
+#endif
     uint32_t previous=KEY_BACK|KEY_DOWN|KEY_ENTER|KEY_ERASE;
     memcpy(palette,base_palette,sizeof palette);
     import_colors(BRAND,logo_palette,sizeof logo_palette/sizeof *logo_palette);
@@ -574,9 +594,26 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
     for (;;) {
         uint32_t now=*clock, keys=fixfinder_keys(now);
         if (keys!=previous) {
-            if (keys==KEY_ERASE) selected=(selected+GAME_COUNT-1)%GAME_COUNT;
-            if (keys==KEY_DOWN) selected=(selected+1)%GAME_COUNT;
+            if (keys==KEY_ERASE) selected=(selected+total-1)%total;
+            if (keys==KEY_DOWN) selected=(selected+1)%total;
             if (keys==KEY_ENTER && previous==0) {
+#ifdef FIXFINDER_EMMC_LIBRARY
+                if (selected>=GAME_COUNT) {
+                    header(frame);
+                    box(frame,20,43,200,76,PANEL);
+                    title(frame,120,65,fixfinder_library_title(selected-GAME_COUNT));
+                    centered(frame,120,93,"LOADING GAME",GREEN);
+                    present(frame);
+                    wait_until(clock,now+550);
+                    if (!fixfinder_library_play(selected-GAME_COUNT,frame,clock)) {
+                        centered(frame,120,109,"COULD NOT READ GAME",RED);
+                        present(frame);
+                        wait_until(clock,*clock+1000);
+                    }
+                    doom_display_set_palette(palette);
+                } else
+#endif
+                {
                 splash(frame,clock,selected);
                 switch (selected) {
                 case DOOM: return;
@@ -592,11 +629,12 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                 case PONG: paddle_game(frame,clock,false); break;
                 case BREAKOUT: paddle_game(frame,clock,true); break;
                 }
+                }
                 keys=fixfinder_keys(*clock);
             }
             previous=keys;
         }
-        selector(frame,selected);
+        selector(frame,selected,total);
         present(frame);
         wait_until(clock,now+32);
     }
