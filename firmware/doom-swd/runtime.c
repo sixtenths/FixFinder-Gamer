@@ -21,6 +21,12 @@
 #include "v9_board.h"
 static const struct v9_lcd_board *doom_board;
 #endif
+#ifdef FIXFINDER_DOOM_DCS
+#include "../lcd/fixfinder_io.h"
+#include "sounds.h"
+bool doom_dcs_init(void);
+void doom_dcs_present(const uint8_t *frame);
+#endif
 
 _Static_assert(SCREENWIDTH * sizeof(uint16_t) == DOOM_FRAME_WIDTH, "Doom pitch changed");
 _Static_assert(SCREENHEIGHT == DOOM_FRAME_HEIGHT, "Doom height changed");
@@ -46,6 +52,9 @@ extern char __heap_end;
 void SysTick_Handler(void)
 {
     milliseconds++;
+#ifdef FIXFINDER_DOOM_DCS
+    fixfinder_io_tick();
+#endif
 }
 
 clock_t clock(void)
@@ -111,6 +120,8 @@ void I_ProcessKeyEvents(void)
     uint32_t pressed = doom_test_buttons;
 #ifdef FIXFINDER_DOOM_BOARD
     pressed |= doom_board->read_buttons();
+#elif defined(FIXFINDER_DOOM_DCS)
+    pressed |= fixfinder_buttons(milliseconds);
 #endif
     const uint32_t changed = pressed ^ previous;
     previous = pressed;
@@ -148,6 +159,8 @@ void I_FinishUpdate_e32(const byte *frame, const byte *palette,
     if (!doom_display_hx8347(frame, &doom_board->bus, doom_lcd_write_row)) {
         I_Error("LCD frame transfer failed");
     }
+#elif defined(FIXFINDER_DOOM_DCS)
+    doom_dcs_present(frame);
 #else
     doom_display_present(frame);
 #endif
@@ -157,6 +170,9 @@ void I_FinishUpdate_e32(const byte *frame, const byte *palette,
         doom_player_y = _g->player.mo->y;
         doom_player_bullets = _g->player.ammo[am_clip];
         doom_player_weapon = _g->player.readyweapon;
+#ifdef FIXFINDER_DOOM_DCS
+        fixfinder_health_led(_g->player.health);
+#endif
         doom_level_frames++;
     }
     doom_frames++;
@@ -164,8 +180,42 @@ void I_FinishUpdate_e32(const byte *frame, const byte *palette,
 
 int I_StartSound(int id, int channel, int volume, int separation)
 {
+#ifdef FIXFINDER_DOOM_DCS
+    if (volume > 0) {
+        switch (id) {
+        case sfx_pistol:
+        case sfx_chgun:
+            fixfinder_beep(45);
+            break;
+        case sfx_shotgn:
+        case sfx_dshtgn:
+        case sfx_rlaunc:
+        case sfx_plasma:
+        case sfx_bfg:
+        case sfx_rxplod:
+            fixfinder_beep(85);
+            break;
+        case sfx_itemup:
+        case sfx_wpnup:
+        case sfx_swtchn:
+        case sfx_swtchx:
+        case sfx_doropn:
+        case sfx_oof:
+            fixfinder_beep(35);
+            break;
+        case sfx_plpain:
+            fixfinder_beep(70);
+            break;
+        case sfx_pldeth:
+        case sfx_pdiehi:
+            fixfinder_beep(160);
+            break;
+        }
+    }
+#else
     (void)id;
     (void)volume;
+#endif
     (void)separation;
     return channel;
 }
@@ -192,6 +242,12 @@ void fixfinder_doom_run(void)
         controller_id != doom_board->expected_id) {
         I_Error("LCD controller ID check failed");
     }
+#elif defined(FIXFINDER_DOOM_DCS)
+    if (!doom_dcs_init()) {
+        I_Error("FixFinder LCD ID check failed");
+    }
+    fixfinder_io_init();
+    fixfinder_beep(90);
 #endif
     setvbuf(stdout, NULL, _IONBF, 0);
     I_PreInitGraphics();

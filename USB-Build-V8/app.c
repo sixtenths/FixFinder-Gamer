@@ -47,7 +47,12 @@ extern hid_fop_handler fop_handler;
 */
 int main(void)
 {
+#ifdef FIXFINDER_USB_GAME
+    extern const uint32_t __gVectors[];
+    SCB->VTOR = (uint32_t)__gVectors;
+#else
     SCB->VTOR = 0x08000000U;
+#endif
     usb_gpio_config();
     usb_rcu_config();
     usb_timer_init();
@@ -72,6 +77,9 @@ int main(void)
 #elif defined(FIXFINDER_LCD_V9)
     extern void fixfinder_v9_run(void);
     fixfinder_v9_run();
+#elif defined(FIXFINDER_USB_GAME)
+    extern void fixfinder_game_run(void);
+    fixfinder_game_run();
 #endif
 
     while(1) {

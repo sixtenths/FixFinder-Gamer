@@ -36,7 +36,21 @@ OF SUCH DAMAGE.
 #include <string.h>
 
 #define USBD_VID                     0x28E9U
+#ifdef FIXFINDER_USB_LOADER
+#include "../firmware/usb-loader/protocol.h"
+#undef DESC_LEN_REPORT
+#define DESC_LEN_REPORT              27U
+#undef CUSTOMHID_IN_PACKET
+#undef CUSTOMHID_OUT_PACKET
+#define CUSTOMHID_IN_PACKET          LOADER_REPORT_SIZE
+#define CUSTOMHID_OUT_PACKET         LOADER_REPORT_SIZE
+#define USBD_PID                     0x028BU
+#elif defined(FIXFINDER_USB_GAME)
+#include "../firmware/usb-loader/protocol.h"
+#define USBD_PID                     0x028CU
+#else
 #define USBD_PID                     0x028AU
+#endif
 
 /* Note:it should use the C99 standard when compiling the below codes */
 /* USB standard device descriptor */
@@ -117,7 +131,11 @@ __ALIGN_BEGIN const usb_hid_desc_config_set custom_hid_config_desc __ALIGN_END =
         .bEndpointAddress     = CUSTOMHID_IN_EP,
         .bmAttributes         = USB_EP_ATTR_INT,
         .wMaxPacketSize       = CUSTOMHID_IN_PACKET,
+#ifdef FIXFINDER_USB_LOADER
+        .bInterval            = 1U
+#else
         .bInterval            = 0x20U
+#endif
     },
 
     .hid_epout =
@@ -130,7 +148,11 @@ __ALIGN_BEGIN const usb_hid_desc_config_set custom_hid_config_desc __ALIGN_END =
         .bEndpointAddress     = CUSTOMHID_OUT_EP,
         .bmAttributes         = USB_EP_ATTR_INT,
         .wMaxPacketSize       = CUSTOMHID_OUT_PACKET,
+#ifdef FIXFINDER_USB_LOADER
+        .bInterval            = 1U
+#else
         .bInterval            = 0x20U
+#endif
     }
 };
 
@@ -161,7 +183,13 @@ static __ALIGN_BEGIN const usb_desc_str product_string __ALIGN_END = {
         .bLength         = USB_STRING_LEN(14U),
         .bDescriptorType = USB_DESCTYPE_STR
     },
+#ifdef FIXFINDER_USB_LOADER
+    .unicode_string = {'F', 'i', 'x', 'F', 'i', 'n', 'd', 'e', 'r', ' ', 'L', 'o', 'a', 'd'}
+#elif defined(FIXFINDER_USB_GAME)
+    .unicode_string = {'F', 'i', 'x', 'F', 'i', 'n', 'd', 'e', 'r', ' ', 'G', 'a', 'm', 'e'}
+#else
     .unicode_string = {'F', 'i', 'x', 'F', 'i', 'n', 'd', 'e', 'r', ' ', 'D', 'o', 'o', 'm'}
+#endif
 };
 
 /* USBD serial string */
@@ -188,6 +216,12 @@ usb_desc custom_hid_desc = {
 };
 
 __ALIGN_BEGIN const uint8_t customhid_report_descriptor[DESC_LEN_REPORT] __ALIGN_END = {
+#ifdef FIXFINDER_USB_LOADER
+    0x06, 0x00, 0xff, 0x09, 0x01, 0xa1, 0x01,
+    0x85, LOADER_REPORT_ID, 0x15, 0x00, 0x26, 0xff, 0x00,
+    0x75, 0x08, 0x95, LOADER_REPORT_SIZE - 1,
+    0x09, 0x02, 0x91, 0x02, 0x09, 0x03, 0x81, 0x02, 0xc0
+#else
     0x06U, 0x00U, 0xFFU, /* USAGE_PAGE (Vendor Defined: 0xFF00) */
     0x09U, 0x00U,        /* USAGE (Custom Device)               */
     0xa1U, 0x01U,        /* COLLECTION (Application)            */
@@ -251,6 +285,7 @@ __ALIGN_BEGIN const uint8_t customhid_report_descriptor[DESC_LEN_REPORT] __ALIGN
     0x81U, 0x03U,     /* INPUT (Cnst,Var,Abs,Vol)  */
 
     0xc0U             /* END_COLLECTION            */
+#endif
 };
 
 /* local function prototypes ('static') */
@@ -327,7 +362,11 @@ static uint8_t custom_hid_init(usb_dev *udev, uint8_t config_index)
     usbd_ep_setup(udev, &(custom_hid_config_desc.hid_epout));
 
     /* prepare receive data */
+#ifdef FIXFINDER_USB_LOADER
+    loader_usb_arm();
+#else
     usbd_ep_recev(udev, CUSTOMHID_OUT_EP, hid_handler.data, 2U);
+#endif
 
     udev->dev.class_data[CUSTOM_HID_INTERFACE] = (void *)&hid_handler;
 
@@ -420,6 +459,9 @@ static uint8_t custom_hid_req_handler(usb_dev *udev, usb_req *req)
 */
 static uint8_t custom_hid_data_in(usb_dev *udev, uint8_t ep_num)
 {
+#ifdef FIXFINDER_USB_LOADER
+    loader_usb_sent();
+#endif
     return USBD_OK;
 }
 
@@ -432,10 +474,22 @@ static uint8_t custom_hid_data_in(usb_dev *udev, uint8_t ep_num)
 */
 static uint8_t custom_hid_data_out(usb_dev *udev, uint8_t ep_num)
 {
+#ifdef FIXFINDER_USB_LOADER
+    loader_usb_receive(udev->dev.transc_out[ep_num].xfer_count);
+#else
     custom_hid_handler *hid = (custom_hid_handler *)udev->dev.class_data[CUSTOM_HID_INTERFACE];
 
+#ifdef FIXFINDER_USB_GAME
+    if (udev->dev.transc_out[ep_num].xfer_count == 2U &&
+        hid->data[0] == 0x14U && hid->data[1] == 0xb7U) {
+        BOOT_COOKIE[0] = BOOT_LOADER;
+        BOOT_COOKIE[1] = ~BOOT_LOADER;
+        NVIC_SystemReset();
+    }
+#endif
     /* Ignore output reports and rearm the OUT endpoint. */
     usbd_ep_recev(udev, CUSTOMHID_OUT_EP, hid->data, 2U);
+#endif
 
     return USBD_OK;
 }

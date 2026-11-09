@@ -3,6 +3,8 @@ param(
     [Parameter(Mandatory)]
     [string]$BoardSource,
 
+    [switch]$SolidGreen,
+
     [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin"
 )
 
@@ -53,6 +55,9 @@ try {
         '-isystem', "$usb/device/core/Include", '-isystem', "$usb/device/class/hid/Include",
         '-isystem', "$usb/ustd/common", '-isystem', "$usb/ustd/class/hid"
     )
+    if ($SolidGreen) {
+        $flags += '-DFIXFINDER_LCD_SOLID_GREEN'
+    }
     $v9Sources = @('USB-Build-V8/app.c', 'firmware/lcd/v9_main.c', 'firmware/lcd/hx8347.c',
         'firmware/lcd/v9_color_test.c', $board)
     $objects = @(Get-ChildItem -LiteralPath $v8 -Filter 'part_*.o' |

@@ -8,10 +8,13 @@ param(
 
     [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin",
     [switch]$CompactReciprocal,
-    [string]$BoardSource
+    [string]$BoardSource,
+    [switch]$FixFinderLcd,
+    [switch]$UsbGame
 )
 
 $ErrorActionPreference = 'Stop'
+if ($BoardSource -and $FixFinderLcd) { throw 'Select one display backend.' }
 $source = (Resolve-Path -LiteralPath $EngineSource).Path
 $wad = (Resolve-Path -LiteralPath $ConvertedWad).Path
 $board = if ($BoardSource) { (Resolve-Path -LiteralPath $BoardSource).Path }
@@ -99,6 +102,14 @@ char key[8] = {0};
     $platformFlags = @('-Os', '-ffunction-sections', '-fdata-sections', '-DGD32F427',
         '-DUSE_USB_HS', '-DUSE_EMBEDDED_PHY', '-DHXTAL_VALUE=8000000U') + $includes
     $boardObjects = @()
+    if ($FixFinderLcd) {
+        $platformFlags += '-DFIXFINDER_DOOM_DCS'
+        $lcd = Join-Path $build 'doom_dcs.o'
+        Invoke-Gcc ($platformFlags + @('-c', 'firmware/lcd/doom_dcs.c', '-o', $lcd))
+        $io = Join-Path $build 'fixfinder_io.o'
+        Invoke-Gcc ($platformFlags + @('-c', 'firmware/lcd/fixfinder_io.c', '-o', $io))
+        $boardObjects += $lcd, $io
+    }
     if ($board) {
         $platformFlags += '-DFIXFINDER_DOOM_BOARD', '-Ifirmware/lcd', '-Ifirmware/doom-swd'
         $boardSources = @('firmware/lcd/hx8347.c', 'firmware/lcd/doom_hx8347.c', $board)
@@ -111,6 +122,7 @@ char key[8] = {0};
     $app = Join-Path $build 'app.o'
     $runtime = Join-Path $build 'runtime.o'
     $display = Join-Path $build 'display.o'
+    if ($UsbGame) { $platformFlags += '-DFIXFINDER_USB_GAME' }
     Invoke-Gcc ($platformFlags + @('-DFIXFINDER_DOOM_SWD', '-c', 'USB-Build-V8/app.c', '-o', $app))
     Invoke-Gcc ($platformFlags + @('-std=gnu23', "-I$engineIncludes", '-c',
         'firmware/doom-swd/runtime.c', '-o', $runtime))
@@ -142,18 +154,32 @@ doom_iwad_len:
     $objects += $boardObjects
     $objects += $replacements | ForEach-Object { Join-Path $build $_ }
     if ($packedSetup) { $objects += Join-Path $build 'setup_wad.o' }
+    $layout = @()
+    if ($UsbGame) {
+        $gameHid = Join-Path $build 'game-hid.o'
+        Invoke-Gcc ($platformFlags + @('-c',
+            'USB-Build-V8/custom_hid_core.c', '-o', $gameHid))
+        $objects = @($objects | Where-Object { (Split-Path -Leaf $_) -ne 'part_22.o' })
+        $objects += $gameHid
+        $layout += '-Wl,--defsym,__fixfinder_app_base=0x08008000'
+    }
 
-    $name = if ($board) { 'FixFinder-Doom-Board' } else { 'FixFinder-Doom-SWD' }
+    $name = if ($FixFinderLcd) { 'FixFinder-Doom-LCD' } elseif ($board) { 'FixFinder-Doom-Board' } else { 'FixFinder-Doom-SWD' }
+    if ($UsbGame) { $name += '-USB' }
     $elf = Join-Path $build "$name.elf"
     $map = Join-Path $build "$name.map"
     # An argument file keeps this link below the Windows command-line limit.
     $objectList = Join-Path $build 'objects.rsp'
     $objects | ForEach-Object { '"' + $_.Replace('\', '/') + '"' } |
         Set-Content -LiteralPath $objectList -Encoding ascii
-    Invoke-Gcc @('-nostartfiles', '--specs=nano.specs', '--specs=nosys.specs',
+    Invoke-Gcc ($layout + @('-nostartfiles', '--specs=nano.specs', '--specs=nosys.specs',
         '-T', 'firmware/doom-swd/firmware.ld', '-Wl,--gc-sections,--print-memory-usage',
-        "-Wl,-Map,$map", "@$objectList", '-o', $elf)
-    if ($board) {
+        "-Wl,-Map,$map", "@$objectList", '-o', $elf))
+    if ($UsbGame) {
+        & (Join-Path $toolchain 'arm-none-eabi-objcopy.exe') -O binary $elf (Join-Path $build "$name.bin")
+        if ($LASTEXITCODE -ne 0) { throw "Could not export $name.bin." }
+    }
+    if ($board -or $FixFinderLcd) {
         Write-Output "Linked board game ELF at $elf"
     } else {
         Write-Output "Linked SWD diagnostic ELF at $elf"

@@ -1,6 +1,10 @@
 # FixFinder DOOM
 
-This project targets the experimental AutoZone FixFinder 5034VSM. V8 USBHS HID is the verified firmware baseline. See the [status log](docs/STATUS.md) and [LCD bring-up notes](docs/LCD.md).
+Play DOOM E1M1 on a modified AutoZone FixFinder 5034VSM using the built-in LCD, buttons, health LEDs, and beeper. On power-up the resident loader shows the AutoZone and DOOM logos and a progress bar, then starts the game.
+
+Start with the [installation and recovery guide](docs/SETUP.md). It covers board identification, first-time SWD programming, preparing the game assets, USB installation, and troubleshooting. If the loader and game are already installed, plug in USB and watch the screen from the moment power comes on. The splash lasts about five seconds.
+
+The verified board is marked `PCB_2L_5034_REVC_TYPEC_20200319` and uses a GD32F427ZK. See the [status log](docs/STATUS.md) and [LCD bring-up notes](docs/LCD.md) for the hardware evidence and earlier diagnostics.
 
 ## Rebuild V8 on Windows
 
@@ -23,13 +27,47 @@ The smoke test uses Python with `unicorn` and `pyelftools`. It enters the linked
 
 The linked ELF preserves the V8 USB startup path and keeps counters, an RGB565 frame hash, player coordinates and the last engine error readable over SWD. The display path scales the 240 x 160 indexed frame in TCM to a logical landscape frame through a 640-byte row buffer in AHB SRAM. The default SWD diagnostic consumes rows in software.
 
-The diagnostic takes pressed actions from the `doom_test_buttons` word at the address reported by the current ELF. The [action bits](firmware/doom-swd/input.h) map to movement, turning, strafing, Fire, Use, Menu and Automap. The runtime sends key events on press and release so multiple actions can remain held together. Hold Use with Strafe Left or Right to cycle weapons. Add `--check-weapon-cycle` to verify both chords in emulation. Physical button wiring remains to be verified.
+The diagnostic takes pressed actions from the `doom_test_buttons` word at the address reported by the current ELF. The [action bits](firmware/doom-swd/input.h) map to movement, turning, strafing, Fire, Use, Menu and Automap. The runtime sends key events on press and release so multiple actions can remain held together. Hold Use with Strafe Left or Right to cycle weapons. Add `--check-weapon-cycle` to verify both chords in emulation.
 
 Add `-CompactReciprocal` to build the smaller diagnostic variant. It replaces the engine's 1 MiB reciprocal lookup table with an equivalent calculation. The regular build is the variant tested on the scanner. The compact build has passed emulation and still needs target timing verification.
 
 `-BoardSource` enables the game build that sends each frame to an initialized landscape HX8347 transport and reads debounced buttons from the same board implementation used by V9. The board must supply measured GPIO mappings, confirm the controller and provide the `read_buttons` callback in [the board interface](firmware/lcd/v9_board.h). The build emits a separate `FixFinder-Doom-Board.elf`. This path has been exercised with a mock board in Cortex-M4 emulation. See the [LCD bring-up notes](docs/LCD.md) for the outstanding hardware checks.
 
-### Multi-map diagnostic
+For the experimental 5034VSM with the verified `00 e3 00 00` display response, use `-FixFinderLcd` instead of `-BoardSource`. This builds `FixFinder-Doom-LCD.elf` with the observed 8-bit EXMC wiring, DCS commands, PF7 backlight PWM, and the on-board controls. The SWD input mailbox remains available for diagnostics.
+
+| Scanner buttons | Doom action |
+| --- | --- |
+| Erase / Down | Walk forward / backward |
+| Back / Enter | Turn left / right |
+| Back + Enter | Fire |
+| Erase + Enter | Use doors and switches |
+| Down + Back | Menu |
+| Down + Enter | Automap |
+
+The LEDs show health. Green is above 50, yellow is 26–50, and red is 25 or lower. The beeper chirps at startup and gives short effects for weapons, pickups, switches, and player damage.
+
+## Swap games over USB on Windows
+
+Scanner 1 has a resident USB loader. It runs before the game and stores one game at a time. With the scanner connected using a USB data cable, run:
+
+```powershell
+python scripts/Install-UsbGame.py --serial 676374F50A38 path/to/game.bin
+```
+
+The installer uses Windows' built-in HID driver. The tested images in this workspace are `build/usb-games/demo.bin` and `build/usb-games/doom.bin`. A game built with the project USB entry point accepts a reboot request from the installer. If a game hangs or has no USB support, start the command and reconnect the scanner while it waits. The loader lights the LCD and shows a countdown during its five-second USB window. During an install, the bar shows flash write progress and the screen reports verification. The loader stays available when the game image is incomplete or fails verification.
+
+To build your own game, start from [the C display demo](firmware/usb-loader/sample_game.c) and implement `fixfinder_game_run()`. The build provides the USB startup and links the game at `0x08008000`. The demo shows how to start the built-in LCD and send RGB565 pixels. Build and install it with:
+
+```powershell
+$demo = ./scripts/Build-UsbLoader.ps1 -GameSource firmware/usb-loader/sample_game.c
+python scripts/Install-UsbGame.py --serial 676374F50A38 (Join-Path $demo 'FixFinder-Game.bin')
+```
+
+To build the USB version of Doom, add `-FixFinderLcd -CompactReciprocal -UsbGame` to the E1M1 build command above and install the resulting `FixFinder-Doom-LCD-USB.bin`. Games must be compiled for the GD32F427 Cortex-M4 and fit within the 3,040 KiB slot. The resident loader is built by running `Build-UsbLoader.ps1` without arguments. Initial loader installation requires SWD.
+
+The [Wi-Fi bring-up notes](docs/RADIO.md) cover the experimental ESP32 transport. It requires separately programming the radio and verifying its on-board serial link first.
+
+## Multi-map diagnostic
 
 To retain E1M1 through E1M3 from a local DOOM 1.9 shareware IWAD, use the following sequence from the repository root. Run the converter from its own directory with absolute input and output paths, as for the E1M1 build.
 

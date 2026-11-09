@@ -1,0 +1,112 @@
+#include "fixfinder_io.h"
+#include "../doom-swd/input.h"
+#include "gd32f4xx.h"
+#include "gd32f4xx_gpio.h"
+#include "gd32f4xx_rcu.h"
+
+enum key {
+    KEY_BACK = 1U << 0,
+    KEY_DOWN = 1U << 1,
+    KEY_ENTER = 1U << 2,
+    KEY_ERASE = 1U << 3
+};
+
+#define BACK_PIN  (1U << 0)  /* PG0 */
+#define DOWN_PIN  (1U << 4)  /* PF4 */
+#define ENTER_PIN (1U << 1)  /* PF1 */
+#define ERASE_PIN (1U << 5)  /* PF5 */
+#define F_MODE_MASK ((3U << 2) | (3U << 8) | (3U << 10))
+#define F_PULL_UP ((1U << 2) | (1U << 8) | (1U << 10))
+#define GREEN_PIN (1U << 12)  /* PG12, active low */
+#define YELLOW_PIN (1U << 13) /* PG13, active low */
+#define RED_PIN (1U << 14)    /* PF14, active low */
+#define BEEPER_PIN (1U << 13) /* PF13, active high */
+
+static volatile uint32_t beep_remaining;
+
+static void configure_output(uint32_t port, unsigned int pin, unsigned int high)
+{
+    const unsigned int shift = pin * 2;
+    GPIO_BOP(port) = 1U << (high ? pin : pin + 16);
+    GPIO_OMODE(port) &= ~(1U << pin);
+    GPIO_PUD(port) &= ~(3U << shift);
+    GPIO_CTL(port) = (GPIO_CTL(port) & ~(3U << shift)) | (1U << shift);
+}
+
+void fixfinder_io_init(void)
+{
+    RCU_AHB1EN |= RCU_AHB1EN_PFEN | RCU_AHB1EN_PGEN;
+    (void)RCU_AHB1EN;
+    GPIO_CTL(GPIOF) &= ~F_MODE_MASK;
+    GPIO_PUD(GPIOF) = (GPIO_PUD(GPIOF) & ~F_MODE_MASK) | F_PULL_UP;
+    GPIO_CTL(GPIOG) &= ~3U;
+    GPIO_PUD(GPIOG) = (GPIO_PUD(GPIOG) & ~3U) | 1U;
+    configure_output(GPIOG, 12, 1);
+    configure_output(GPIOG, 13, 1);
+    configure_output(GPIOF, 14, 1);
+    configure_output(GPIOF, 13, 0);
+}
+
+void fixfinder_beep(uint32_t duration_ms)
+{
+    if (duration_ms == 0) {
+        return;
+    }
+    const uint32_t interrupt_mask = __get_PRIMASK();
+    __disable_irq();
+    if (beep_remaining < duration_ms) {
+        beep_remaining = duration_ms;
+    }
+    GPIO_BOP(GPIOF) = BEEPER_PIN;
+    __set_PRIMASK(interrupt_mask);
+}
+
+void fixfinder_io_tick(void)
+{
+    if (beep_remaining != 0 && --beep_remaining == 0) {
+        GPIO_BOP(GPIOF) = BEEPER_PIN << 16;
+    }
+}
+
+void fixfinder_health_led(int health)
+{
+    if (health > 50) {
+        GPIO_BOP(GPIOG) = (GREEN_PIN << 16) | YELLOW_PIN;
+        GPIO_BOP(GPIOF) = RED_PIN;
+    } else if (health > 25) {
+        GPIO_BOP(GPIOG) = GREEN_PIN | (YELLOW_PIN << 16);
+        GPIO_BOP(GPIOF) = RED_PIN;
+    } else {
+        GPIO_BOP(GPIOG) = GREEN_PIN | YELLOW_PIN;
+        GPIO_BOP(GPIOF) = RED_PIN << 16;
+    }
+}
+
+uint32_t fixfinder_buttons(uint32_t now)
+{
+    static uint32_t candidate, stable, changed_at;
+    uint32_t f = ~GPIO_ISTAT(GPIOF);
+    uint32_t g = ~GPIO_ISTAT(GPIOG);
+    uint32_t pressed = ((g & BACK_PIN) ? KEY_BACK : 0) |
+                       ((f & DOWN_PIN) ? KEY_DOWN : 0) |
+                       ((f & ENTER_PIN) ? KEY_ENTER : 0) |
+                       ((f & ERASE_PIN) ? KEY_ERASE : 0);
+    if (pressed != candidate) {
+        candidate = pressed;
+        changed_at = now;
+    } else if (now - changed_at >= 16U) {
+        stable = candidate;
+    }
+
+    switch (stable) {
+    case KEY_BACK | KEY_ENTER: return DOOM_BUTTON_FIRE;
+    case KEY_ERASE | KEY_ENTER: return DOOM_BUTTON_USE;
+    case KEY_DOWN | KEY_BACK: return DOOM_BUTTON_MENU;
+    case KEY_DOWN | KEY_ENTER: return DOOM_BUTTON_MAP;
+    default:
+        return ((stable & KEY_BACK) ? DOOM_BUTTON_LEFT : 0) |
+               ((stable & KEY_DOWN) ? DOOM_BUTTON_BACK : 0) |
+               ((stable & KEY_ENTER) ? DOOM_BUTTON_RIGHT : 0) |
+               ((stable & KEY_ERASE) ? DOOM_BUTTON_FORWARD : 0);
+    }
+}

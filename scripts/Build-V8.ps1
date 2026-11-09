@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin",
-    [switch]$PassThru
+    [switch]$PassThru,
+    [switch]$LoaderObjects
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,14 +61,20 @@ try {
         '-DGD32F427', '-DUSE_USB_HS', '-DUSE_EMBEDDED_PHY', '-DHXTAL_VALUE=8000000U'
     )
     $compile += $includes | ForEach-Object { "-I$_" }
+    if ($LoaderObjects) { $compile += @('-Oz', '-flto') }
 
     New-Item -ItemType Directory -Force -Path $build | Out-Null
     $work = Join-Path $build ("v8-" + [guid]::NewGuid())
     New-Item -ItemType Directory -Path $work | Out-Null
     $objects = for ($i = 0; $i -lt $sources.Count; $i++) {
+        if ($LoaderObjects -and $i -in 1, 22) { continue }
         $object = Join-Path $work "part_$i.o"
         Invoke-Tool $gcc ($compile + @('-c', $sources[$i], '-o', $object))
         $object
+    }
+    if ($LoaderObjects) {
+        $work
+        return
     }
 
     $elf = Join-Path $work 'FixFinder-USB-V8.elf'

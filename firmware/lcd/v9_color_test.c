@@ -5,7 +5,11 @@ volatile struct v9_lcd_progress v9_lcd_progress;
 bool v9_lcd_color_test(const struct hx8347_bus *bus, uint8_t expected_id,
                       bool landscape, void (*delay_ms)(uint32_t))
 {
+#ifdef FIXFINDER_LCD_SOLID_GREEN
+    static const uint16_t colors[] = {0x07e0};
+#else
     static const uint16_t colors[] = {0xf800, 0x07e0, 0x001f, 0xffff, 0x0000};
+#endif
     uint8_t id;
 
     v9_lcd_progress.controller_id = 0;
