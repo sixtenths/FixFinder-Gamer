@@ -10,7 +10,7 @@ import time
 import webbrowser
 
 import fixfinder_hid_windows as hid
-from fixfinder_desktop_windows import Capture, HEIGHT, WIDTH, dpi_awareness, match_size, monitors
+from fixfinder_desktop_windows import Capture, HEIGHT, WIDTH, TileCompressor, dpi_awareness, match_size, monitors
 from fixfinder_image import DESKTOP_PID, VID
 
 REPORT_ID, REPORT_SIZE = 0x17, 64
@@ -18,6 +18,8 @@ START, TILE, DATA, STOP, PING, BATCH = range(1, 7)
 BATCH_ID, BATCH_SIZE = 0x18, 4096
 TILE_W, TILE_H = 40, 20
 TILE_COLS, TILE_ROWS = WIDTH // TILE_W, HEIGHT // TILE_H
+TILE_BYTES = 2 * TILE_W * TILE_H
+RAW, LZNT1, PATCH = 0, 5, 6
 DRIVER_URL = "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases"
 
 
@@ -28,8 +30,12 @@ def tiles(frame):
                            for y in range(top, top + TILE_H))
 
 
-def encode(raw, compact=False):
-    pixels = struct.unpack("<800H", raw)
+def encode(raw, compact=False, compressor=None):
+    packed = compressor(raw) if compressor else None
+    kind, payload = (LZNT1, packed) if packed else (RAW, raw)
+    if len(payload) <= 8:
+        return kind, payload
+    pixels = struct.unpack(f"<{len(raw) // 2}H", raw)
     runs = bytearray()
     for color, group in groupby(pixels):
         count = sum(1 for _ in group)
@@ -37,9 +43,10 @@ def encode(raw, compact=False):
             runs.extend(struct.pack("<BH", 255, color))
             count -= 255
         runs.extend(struct.pack("<BH", count, color))
-        if len(runs) >= len(raw):
+        if len(runs) >= len(payload):
             break
-    kind, payload = (1, runs) if len(runs) < len(raw) else (0, raw)
+    if len(runs) < len(payload):
+        kind, payload = 1, runs
 
     palette = list(dict.fromkeys(pixels))
     if len(palette) <= 16:
@@ -48,14 +55,47 @@ def encode(raw, compact=False):
             indexed, bits = 3, 1
         elif compact and len(palette) <= 4:
             indexed, bits = 4, 2
-        if 1 + 2 * len(palette) + len(pixels) * bits // 8 < len(payload):
+        if 1 + 2 * len(palette) + (len(pixels) * bits + 7) // 8 < len(payload):
             by_color = {color: index for index, color in enumerate(palette)}
             indices = [by_color[pixel] for pixel in pixels]
             per_byte = 8 // bits
+            indices.extend([0] * (-len(indices) % per_byte))
             groups = zip(*(indices[i::per_byte] for i in range(per_byte)))
             packed = bytes(sum(index << (i * bits) for i, index in enumerate(group)) for group in groups)
             return indexed, struct.pack(f"<B{len(palette)}H", len(palette), *palette) + packed
     return kind, payload
+
+
+def changed_rect(raw, previous):
+    """Crop a tile to the bounds of the changed RGB565 pixels."""
+    if previous is None:
+        return None
+    stride = 2 * TILE_W
+    top, bottom = 0, TILE_H
+    while raw[top * stride:(top + 1) * stride] == previous[top * stride:(top + 1) * stride]:
+        top += 1
+        if top == TILE_H:
+            return None
+    while raw[(bottom - 1) * stride:bottom * stride] == previous[(bottom - 1) * stride:bottom * stride]:
+        bottom -= 1
+    left, right = stride, 0
+    for row in range(top * stride, bottom * stride, stride):
+        if raw[row:row + stride] == previous[row:row + stride]:
+            continue
+        x = 0
+        while x < left and raw[row + x:row + x + 2] == previous[row + x:row + x + 2]:
+            x += 2
+        left = min(x, left)
+        x = stride
+        while x > right and raw[row + x - 2:row + x] == previous[row + x - 2:row + x]:
+            x -= 2
+        right = max(x, right)
+        if not left and right == stride:
+            break
+    if (right - left) * (bottom - top) >= TILE_BYTES * 3 // 4:
+        return None
+    patch = b"".join(raw[row + left:row + right] for row in range(top * stride, bottom * stride, stride))
+    return bytes((left // 2, top, (right - left) // 2, bottom - top)), patch
 
 
 class DisplayLink:
@@ -69,6 +109,8 @@ class DisplayLink:
         self.token = 0
         self.started = False
         self.batched = False
+        self.rectangles = False
+        self.compressor = None
 
     def send(self, operation, payload=b""):
         if self.device.write(bytes((REPORT_ID, operation)) + payload) != REPORT_SIZE:
@@ -96,6 +138,9 @@ class DisplayLink:
             raise TimeoutError("Open the game selector on the FixFinder and close the USB viewer, then retry.") from error
         self.started = True
         self.batched = reply[5] == 1
+        self.rectangles = self.batched and reply[6] == 1
+        if self.rectangles:
+            self.compressor = TileCompressor(TILE_BYTES)
 
     def tile(self, index, raw):
         encoding, payload = encode(raw)
@@ -106,7 +151,7 @@ class DisplayLink:
             self.send(DATA, struct.pack("<HHB", self.token, offset, len(part)) + part)
         self.receive(TILE, self.token)
 
-    def update(self, changes, stop):
+    def update(self, changes, stop, previous=None):
         if not self.batched:
             for index, raw in changes:
                 if stop.is_set():
@@ -118,8 +163,25 @@ class DisplayLink:
         for index, raw in changes:
             if stop.is_set():
                 return False
-            encoding, payload = encode(raw, compact=True)
+            patch = changed_rect(raw, previous[index]) if self.rectangles and previous else None
+            if patch:
+                bounds, region = patch
+                encoding, payload = encode(region, compact=True, compressor=self.compressor)
+                encoding, payload = PATCH, bounds + bytes((encoding,)) + payload
+            else:
+                encoding, payload = encode(raw, compact=True, compressor=self.compressor)
             if len(batch) + 4 + len(payload) > BATCH_SIZE:
+                if self.rectangles and encoding == RAW:
+                    # Use the end of this transfer for whole rows of a raw tile.
+                    row_bytes = 2 * TILE_W
+                    rows = (BATCH_SIZE - len(batch) - 4 - 5) // row_bytes
+                    if rows >= 2:
+                        cut = rows * row_bytes
+                        first = bytes((0, 0, TILE_W, rows, RAW)) + raw[:cut]
+                        batch.extend(struct.pack("<BBH", index, PATCH, len(first)))
+                        batch.extend(first)
+                        encoding = PATCH
+                        payload = bytes((0, rows, TILE_W, TILE_H - rows, RAW)) + raw[cut:]
                 self.send_batch(batch)
                 batch = bytearray(5)
             batch.extend(struct.pack("<BBH", index, encoding, len(payload)))
@@ -131,7 +193,10 @@ class DisplayLink:
     def send_batch(self, batch):
         self.token = (self.token + 1) & 0xffff
         struct.pack_into("<BHH", batch, 0, BATCH_ID, self.token, len(batch))
-        self.device.write_feature(bytes(batch).ljust(BATCH_SIZE, b"\0"))
+        if self.rectangles and len(batch) < REPORT_SIZE:
+            self.send(BATCH, batch[1:])
+        else:
+            self.device.write_feature(bytes(batch).ljust(BATCH_SIZE, b"\0"))
         self.receive(BATCH, self.token)
 
     def ping(self):
@@ -174,7 +239,7 @@ def stream(source, cursor, serial, stop, notify):
                 frame = list(tiles(capture.frame()))
                 changes = [(i, raw) for i, raw in enumerate(frame) if raw != previous[i]]
                 if changes:
-                    if not link.update(changes, stop):
+                    if not link.update(changes, stop, previous):
                         break
                     previous = frame
                     updated += 1
@@ -182,14 +247,17 @@ def stream(source, cursor, serial, stop, notify):
                 if time.monotonic() - last_transfer >= .75:
                     link.ping()
                     last_transfer = time.monotonic()
-                stop.wait(max(0, 1 / 60 - (time.monotonic() - now)))
+                # Windows Python uses a high-resolution waitable timer for sleep.
+                delay = 1 / 60 - (time.monotonic() - now)
+                if delay > 0:
+                    time.sleep(delay)
         finally:
             capture.close()
     finally:
         link.close()
 
 
-def show_app(serial):
+def show_app(serial, connect_virtual=False):
     import tkinter as tk
     from tkinter import ttk
 
@@ -334,6 +402,13 @@ def show_app(serial):
     ttk.Button(setup, text="Virtual monitor driver",
                command=lambda: webbrowser.open(DRIVER_URL)).pack(side="left", padx=(7, 0))
     refresh()
+    if connect_virtual:
+        candidates = [i for i, item in enumerate(source_list) if item.virtual and not item.primary]
+        if len(candidates) == 1:
+            picker.current(candidates[0])
+            root.after_idle(connect)
+        else:
+            status.set("Select the virtual display and click Connect.")
     root.protocol("WM_DELETE_WINDOW", close)
     root.after(100, poll)
     root.mainloop()
@@ -343,13 +418,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", type=str.upper, help="USB serial when more than one scanner is connected")
     parser.add_argument("--list-displays", action="store_true", help="list active Windows display sources")
+    parser.add_argument("--connect-virtual", action="store_true",
+                        help="connect on launch when exactly one secondary virtual display is active")
     args = parser.parse_args()
     dpi_awareness()
     if args.list_displays:
         for source in monitors():
             print(source)
     else:
-        show_app(args.serial)
+        show_app(args.serial, args.connect_virtual)
 
 
 if __name__ == "__main__":

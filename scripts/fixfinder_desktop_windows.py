@@ -12,6 +12,7 @@ CDS_TEST = 2
 ENUM_CURRENT_SETTINGS = 0xffffffff
 user = c.WinDLL("user32", use_last_error=True)
 gdi = c.WinDLL("gdi32", use_last_error=True)
+ntdll = c.WinDLL("ntdll")
 ptr = c.c_void_p
 dc = w.HDC
 
@@ -76,6 +77,32 @@ stretch = api(gdi, "StretchBlt", w.BOOL, dc, c.c_int, c.c_int, c.c_int, c.c_int,
               dc, c.c_int, c.c_int, c.c_int, c.c_int, w.DWORD)
 copy = api(gdi, "BitBlt", w.BOOL, dc, c.c_int, c.c_int, c.c_int, c.c_int,
            dc, c.c_int, c.c_int, w.DWORD)
+compression_workspace = api(ntdll, "RtlGetCompressionWorkSpaceSize", w.LONG,
+                            w.USHORT, c.POINTER(w.ULONG), c.POINTER(w.ULONG))
+compress_buffer = api(ntdll, "RtlCompressBuffer", w.LONG, w.USHORT,
+                      ptr, w.ULONG, ptr, w.ULONG, w.ULONG, c.POINTER(w.ULONG), ptr)
+
+
+class TileCompressor:
+    """Use the built-in Windows LZNT1 compressor for small RGB565 updates."""
+    def __init__(self, capacity):
+        work, fragment = w.ULONG(), w.ULONG()
+        self.format = 2  # COMPRESSION_FORMAT_LZNT1 with the standard engine.
+        if compression_workspace(self.format, c.byref(work), c.byref(fragment)):
+            raise OSError("Windows could not initialize desktop compression.")
+        self.workspace = c.create_string_buffer(work.value)
+        self.output = c.create_string_buffer(capacity)
+        self.size = w.ULONG()
+
+    def __call__(self, raw):
+        if (compress_buffer(self.format, raw, len(raw), self.output, len(self.output),
+                            4096, c.byref(self.size), self.workspace) >= 0 and
+                3 <= self.size.value < len(raw)):
+            chunk = self.output.raw[:self.size.value]
+            header = int.from_bytes(chunk[:2], "little")
+            if header & 0xf000 == 0xb000 and (header & 0xfff) + 3 == len(chunk):
+                return chunk
+        return None
 
 
 def dpi_awareness():

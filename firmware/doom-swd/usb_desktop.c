@@ -6,7 +6,7 @@
 #include <string.h>
 
 enum { START = 1, TILE, DATA, STOP, PING, BATCH };
-enum { RAW, RUNS, INDEXED, MONO, FOUR_COLORS };
+enum { RAW, RUNS, INDEXED, MONO, FOUR_COLORS, LZNT1, PATCH };
 enum { TILE_W = 40, TILE_H = 20, PIXELS = TILE_W * TILE_H,
        COLUMNS = DOOM_LCD_WIDTH / TILE_W, ROWS = DOOM_LCD_HEIGHT / TILE_H };
 
@@ -53,6 +53,13 @@ void desktop_usb_receive(const uint8_t *packet)
         request = op;
     } else if (batch_receiving || batch_ready) {
         return;
+    } else if (op == BATCH && !tile_ready && !expected) {
+        unsigned int size = le16(packet + 4);
+        if (size <= 5 || size >= DESKTOP_REPORT_SIZE) return;
+        uint8_t *data = doom_usb_video_scratch();
+        data[0] = DESKTOP_BATCH_ID;
+        memcpy(data + 1, packet + 2, size - 1);
+        batch_ready = true;
     } else if (op == TILE && !tile_ready) {
         sequence = le16(packet + 2);
         tile = packet[4];
@@ -88,30 +95,67 @@ void desktop_usb_batch_received(void)
     batch_receiving = false;
 }
 
-static bool decode_tile(const uint8_t *data, unsigned int size, unsigned int format)
+/* A tile fits in one LZNT1 chunk. Decode directly into the RGB565 buffer. */
+static bool decode_lznt1(const uint8_t *data, unsigned int size, unsigned int capacity)
+{
+    if (size < 3) return false;
+    unsigned int header = le16(data);
+    if ((header & 0xf000U) != 0xb000U || (header & 0xfffU) + 3U != size) return false;
+    uint8_t *output = (uint8_t *)pixels;
+    unsigned int out = 0;
+    for (unsigned int i = 2; i < size;) {
+        unsigned int flags = data[i++];
+        if (i == size) return false;
+        for (unsigned int bit = 0; bit < 8 && i < size; ++bit) {
+            if (!(flags & (1U << bit))) {
+                if (out == capacity) return false;
+                output[out++] = data[i++];
+                continue;
+            }
+            if (!out || size - i < 2) return false;
+            unsigned int shift = 12;
+            for (unsigned int position = out - 1; position >= 16; position >>= 1) --shift;
+            unsigned int match = le16(data + i);
+            unsigned int distance = (match >> shift) + 1;
+            unsigned int length = (match & ((1U << shift) - 1U)) + 3;
+            i += 2;
+            if (distance > out || length > capacity - out) return false;
+            while (length--) {
+                output[out] = output[out - distance];
+                ++out;
+            }
+        }
+    }
+    return out == capacity;
+}
+
+static bool decode_tile(const uint8_t *data, unsigned int size, unsigned int format,
+                        unsigned int count_pixels)
 {
     if (!size) return false;
-    if (format == RAW) {
-        if (size != sizeof pixels) return false;
-        memcpy(pixels, data, sizeof pixels);
+    if (format == LZNT1) {
+        return decode_lznt1(data, size, 2 * count_pixels);
+    } else if (format == RAW) {
+        if (size != 2 * count_pixels) return false;
+        memcpy(pixels, data, size);
     } else if (format == RUNS) {
         if (size % 3) return false;
         unsigned int out = 0;
         for (unsigned int i = 0; i < size; i += 3) {
             unsigned int length = data[i];
             uint16_t color = le16(data + i + 1);
-            if (!length || length > PIXELS - out) return false;
+            if (!length || length > count_pixels - out) return false;
             while (length--) pixels[out++] = color;
         }
-        if (out != PIXELS) return false;
+        if (out != count_pixels) return false;
     } else if (format <= FOUR_COLORS) {
         unsigned int bits = format == INDEXED ? 4 : format == MONO ? 1 : 2;
         unsigned int mask = (1U << bits) - 1U;
         unsigned int count = data[0];
-        if (!count || count > mask + 1U || size != 1 + 2 * count + PIXELS * bits / 8)
+        if (!count || count > mask + 1U || size != 1 + 2 * count + (count_pixels * bits + 7) / 8)
             return false;
         const uint8_t *indices = data + 1 + 2 * count;
-        for (unsigned int i = 0; i < PIXELS; ++i) {
+        for (unsigned int i = 0; i < count_pixels; ++i) {
             unsigned int bit = i * bits;
             unsigned int color = (indices[bit / 8] >> (bit % 8)) & mask;
             if (color >= count) return false;
@@ -138,10 +182,20 @@ static bool draw_batch(const uint8_t *data)
         unsigned int index = data[offset], format = data[offset + 1];
         unsigned int size = le16(data + offset + 2);
         offset += 4;
-        if (index >= COLUMNS * ROWS || size > end - offset ||
-            !decode_tile(data + offset, size, format))
-            return false;
-        draw_tile(index);
+        if (index >= COLUMNS * ROWS || size > end - offset) return false;
+        if (format == PATCH) {
+            if (size < 5) return false;
+            unsigned int x = data[offset], y = data[offset + 1];
+            unsigned int width = data[offset + 2], height = data[offset + 3];
+            if (!width || !height || x + width > TILE_W || y + height > TILE_H ||
+                !decode_tile(data + offset + 5, size - 5, data[offset + 4], width * height))
+                return false;
+            doom_dcs_write_rgb_rect(index % COLUMNS * TILE_W + x, index / COLUMNS * TILE_H + y,
+                                    width, height, pixels);
+        } else {
+            if (!decode_tile(data + offset, size, format, PIXELS)) return false;
+            draw_tile(index);
+        }
         offset += size;
     }
     return true;
@@ -156,6 +210,7 @@ static void acknowledge(uint8_t op, uint8_t status, uint16_t token)
     reply[3] = token;
     reply[4] = token >> 8;
     reply[5] = op == START ? 1 : 0;  /* Feature-report batching capability. */
+    reply[6] = op == START ? 1 : 0;  /* Compressed rectangles and short batches. */
     reply_pending = true;
     custom_hid_report_send(&custom_hid, reply, sizeof reply);
 }
@@ -200,7 +255,7 @@ bool fixfinder_desktop_run(const volatile uint32_t *clock)
             __set_PRIMASK(irq);
             last_activity = now;
         } else if (!reply_pending && tile_ready) {
-            bool valid = !invalid && decode_tile(doom_usb_video_scratch(), expected, encoding);
+            bool valid = !invalid && decode_tile(doom_usb_video_scratch(), expected, encoding, PIXELS);
             if (valid) draw_tile(tile);
             __disable_irq();
             if (running) {

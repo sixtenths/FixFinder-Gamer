@@ -29,4 +29,6 @@ In FixFinder Second Display, click **Refresh displays**, select the virtual moni
 2. Open [FixFinder-SecondDisplay.pyw](../scripts/FixFinder-SecondDisplay.pyw) on Windows with Python and Tkinter. If Windows does not associate `.pyw` with Python, run `python scripts/FixFinder-SecondDisplay.pyw` from the repository.
 3. Leave the scanner on its game selector and close the USB game viewer. In the app, choose the Windows display and click **Connect**. Drag a window to that desktop or use **Windows + Shift + Left/Right Arrow** to move it between displays.
 
-The app sends only tiles whose pixels changed and shows the rate of delivered updates. Updated firmware uses larger USB transfers and lossless color encoding for faster motion. The app also works with the earlier desktop-enabled firmware at its original transfer speed. Full-screen, detailed motion uses more USB bandwidth than a moving cursor or a dashboard.
+The app shows the rate of delivered updates. The latest firmware sends rectangles around changed pixels and compresses them losslessly at native resolution. Very small updates use short USB reports. The app also works with earlier desktop-enabled firmware at its original transfer speed. Full-screen motion with little repeated detail needs more USB bandwidth than a moving cursor or a dashboard.
+
+If exactly one secondary virtual monitor is active, launch the app with `--connect-virtual` to connect to it automatically.
