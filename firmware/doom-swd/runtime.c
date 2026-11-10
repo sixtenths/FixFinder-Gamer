@@ -20,6 +20,27 @@
 #include "i_video.h"
 #include "z_zone.h"
 #include "display.h"
+#ifdef FIXFINDER_SAVE_FILES
+#include "save_files.h"
+#include "doom_saves.h"
+
+#ifdef FIXFINDER_EXTERNAL_DOOM_MAPS
+#define DOOM_SAVE_NAME "DOOMEP1"
+#else
+#define DOOM_SAVE_NAME "DOOMMAP1"
+#endif
+
+bool fixfinder_doom_save(const uint8_t *data, unsigned int size, unsigned int offset)
+{
+    return fixfinder_save_write(offset ? "DOOMCFG" : DOOM_SAVE_NAME, data, size);
+}
+
+void fixfinder_doom_load(uint8_t *data, unsigned int size, unsigned int offset)
+{
+    if (!fixfinder_save_read(offset ? "DOOMCFG" : DOOM_SAVE_NAME, data, size))
+        memset(data, 0, size);
+}
+#endif
 #include "input.h"
 #ifdef FIXFINDER_ARCADE
 #include "arcade.h"

@@ -5,7 +5,8 @@ param(
     [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin",
     [switch]$Episode,
     [string[]]$PacmanRom,
-    [switch]$PacmanFromEmmc
+    [switch]$PacmanFromEmmc,
+    [switch]$SaveFiles
 )
 
 $ErrorActionPreference = 'Stop'
@@ -58,6 +59,7 @@ $options = @{
     FixFinderLcd = $true
     UsbGame = $true
     Arcade = $true
+    SaveFiles = $SaveFiles
 }
 if ($Episode) {
     $compacted = Join-Path $work 'episode-compacted.wad'

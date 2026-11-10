@@ -4,6 +4,7 @@ param(
     [string[]]$GameSource,
     [switch]$GameSdk,
     [switch]$ArcadeOnly,
+    [switch]$SaveFiles,
     [ValidateSet('UART3', 'USART0')]
     [string]$RadioUart,
     [switch]$RamTest
@@ -12,6 +13,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $buildGame = $GameSource -or $ArcadeOnly
 if ($ArcadeOnly -and ($GameSource -or $GameSdk)) { throw '-ArcadeOnly selects its own game sources.' }
+if ($SaveFiles -and !$ArcadeOnly) { throw '-SaveFiles requires -ArcadeOnly.' }
 if ($GameSdk -and !$GameSource) { throw '-GameSdk requires -GameSource.' }
 if ($RamTest -and $buildGame) { throw '-RamTest applies to the resident loader.' }
 if ($RadioUart -and $buildGame) { throw '-RadioUart applies to the resident loader.' }
@@ -61,6 +63,9 @@ try {
             $defines += '-DFIXFINDER_USB_VIDEO', '-Ifirmware/game-sdk'
         }
         if ($ArcadeOnly) { $defines += '-DFIXFINDER_ARCADE_ONLY' }
+        if ($SaveFiles) {
+            $defines += '-DFIXFINDER_SAVE_FILES', '-DFIXFINDER_EMMC_LIBRARY', '-DFIXFINDER_STORAGE_PROBE'
+        }
         $objects = $common + @(
             (Compile 'USB-Build-V8/app.c' 'game-entry' $defines),
             (Compile 'USB-Build-V8/custom_hid_core.c' 'game-hid' $defines))
@@ -69,6 +74,11 @@ try {
                 'firmware/lcd/doom_dcs.c', 'firmware/doom-swd/display.c',
                 'firmware/doom-swd/usb_video.c', 'firmware/doom-swd/usb_input.c')) {
                 $objects += Compile $unit ([IO.Path]::GetFileNameWithoutExtension($unit)) $defines
+            }
+        }
+        if ($SaveFiles) {
+            foreach ($unit in @('emmc_probe', 'game_library', 'save_files', 'storage/ff')) {
+                $objects += Compile "firmware/doom-swd/$unit.c" ([IO.Path]::GetFileName($unit)) $defines
             }
         }
         if ($ArcadeOnly) {

@@ -1,5 +1,6 @@
 #include "dino.h"
 #include "arcade.h"
+#include "save_files.h"
 #include "display.h"
 #include "input.h"
 #include "usb_input.h"
@@ -118,7 +119,7 @@ static const uint8_t *preview_row(const void *frame,unsigned int y)
     return row;
 }
 
-bool fixfinder_dino_run(const volatile uint32_t *clock,unsigned int *score)
+bool fixfinder_dino_run(const volatile uint32_t *clock,unsigned int *score,bool resume)
 {
     uint8_t *frame=malloc(W*H);
     if (!frame) return false;
@@ -126,40 +127,46 @@ bool fixfinder_dino_run(const volatile uint32_t *clock,unsigned int *score)
     doom_display_set_palette(palette);
     backdrop(frame);
     uint32_t step=*clock, render=step;
-    unsigned int tick=0, distance=0;
-    int height=0, velocity=0, cactus_x=W+25, cactus_height=30;
+    struct {
+        unsigned int tick, distance;
+        int height, velocity, cactus_x, cactus_height;
+    } state = {.cactus_x=W+25,.cactus_height=30};
+    if (resume) fixfinder_save_read("DINO", &state, sizeof state);
     bool was_jump=true, first=true, crashed=false;
     fixfinder_set_led(FIXFINDER_LED_GREEN);
     for (;;) {
         uint32_t now=*clock, keys=fixfinder_keys(now);
-        if (fixfinder_arcade_exit(keys,now)) break;
+        if (fixfinder_arcade_suspend(keys,now)) {
+            fixfinder_save_write("DINO", &state, sizeof state);
+            break;
+        }
         bool jump=keys!=(KEY_DOWN|KEY_BACK) && (keys || (doom_usb_input_buttons()&DOOM_BUTTON_FIRE));
-        if (jump && !was_jump && !height) {
-            velocity=2230;
+        if (jump && !was_jump && !state.height) {
+            state.velocity=2230;
             fixfinder_beep(22);
         }
         was_jump=jump;
         while ((int32_t)(now-step)>=0 && !crashed) {
-            height+=velocity;
-            if (height>0) velocity-=147;
-            else height=velocity=0;
-            unsigned int speed=3+(tick<1500?tick/375:4);
-            distance+=speed;
-            cactus_x-=(int)speed;
-            if (cactus_x< -22) {
-                cactus_x=W+20+(int)(tick%70);
-                cactus_height=25+(int)(tick%14);
+            state.height+=state.velocity;
+            if (state.height>0) state.velocity-=147;
+            else state.height=state.velocity=0;
+            unsigned int speed=3+(state.tick<1500?state.tick/375:4);
+            state.distance+=speed;
+            state.cactus_x-=(int)speed;
+            if (state.cactus_x< -22) {
+                state.cactus_x=W+20+(int)(state.tick%70);
+                state.cactus_height=25+(int)(state.tick%14);
             }
-            crashed=cactus_x+16>DINO_X+7 && cactus_x+5<DINO_X+39 && (height>>8)<cactus_height-3;
-            ++tick;
-            step+=16+(tick&1U);
+            crashed=state.cactus_x+16>DINO_X+7 && state.cactus_x+5<DINO_X+39 && (state.height>>8)<state.cactus_height-3;
+            ++state.tick;
+            step+=16+(state.tick&1U);
         }
         if (crashed || (int32_t)(now-render)>=0) {
-            terrain(frame,distance);
-            cactus(frame,cactus_x,cactus_height);
-            dinosaur(frame,GROUND-(height>>8),tick);
+            terrain(frame,state.distance);
+            cactus(frame,state.cactus_x,state.cactus_height);
+            dinosaur(frame,GROUND-(state.height>>8),state.tick);
             rect(frame,252,76,58,18,INK);
-            score_digits(frame,tick/6);
+            score_digits(frame,state.tick/6);
             unsigned int start=first?0:FIRST_MOVING_ROW;
             if (first || !shadow) doom_dcs_begin_native_rows(start);
             for (unsigned int y=start;y<H;++y) {
@@ -177,7 +184,7 @@ bool fixfinder_dino_run(const volatile uint32_t *clock,unsigned int *score)
         }
         if (crashed) break;
     }
-    *score=tick/6;
+    *score=state.tick/6;
     free(shadow);
     free(frame);
     return crashed;

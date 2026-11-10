@@ -1,5 +1,6 @@
 #include "racer.h"
 #include "arcade.h"
+#include "save_files.h"
 #include "display.h"
 #include "input.h"
 #include "usb_input.h"
@@ -242,23 +243,32 @@ static void advance(struct race *state,uint32_t keys)
     ++state->ticks;
 }
 
-enum race_result fixfinder_race(const volatile uint32_t *clock)
+enum race_result fixfinder_race(const volatile uint32_t *clock, bool resume)
 {
     uint8_t *image=malloc(W*H);
     if (!image) return RACE_EXIT;
-    struct race state={.speed=80,.traffic={{720,-146,false},{1480,0,false},{2300,146,false},{3100,-146,false}}};
+    struct {
+        struct race race;
+        uint32_t elapsed;
+    } saved = {.race={.speed=80,.traffic={{720,-146,false},{1480,0,false},{2300,146,false},{3100,-146,false}}}};
+    if (resume) fixfinder_save_read("NEON", &saved, sizeof saved);
+    struct race *state = &saved.race;
     doom_display_set_palette(colors);
     skyline(image);
-    uint32_t started=*clock, step=started, render=started;
+    uint32_t step=*clock, started=step-saved.elapsed, render=step;
     enum race_result result=RACE_EXIT;
     bool first=true;
     for (;;) {
         uint32_t now=*clock, elapsed=now-started;
         uint32_t keys=fixfinder_physical_keys(now), remote=doom_usb_input_buttons();
         uint32_t exit=(doom_usb_input_keys()&USB_INPUT_RETURN)?KEY_DOWN|KEY_BACK:keys;
-        if (fixfinder_arcade_exit(exit,now)) break;
-        if (state.distance>=LENGTH || elapsed>=TIME_LIMIT) {
-            result=state.distance>=LENGTH?RACE_FINISHED:RACE_TIMEOUT;
+        if (fixfinder_arcade_suspend(exit,now)) {
+            saved.elapsed = elapsed;
+            fixfinder_save_write("NEON", &saved, sizeof saved);
+            break;
+        }
+        if (state->distance>=LENGTH || elapsed>=TIME_LIMIT) {
+            result=state->distance>=LENGTH?RACE_FINISHED:RACE_TIMEOUT;
             break;
         }
         if (remote&DOOM_BUTTON_LEFT) keys|=KEY_BACK;
@@ -266,14 +276,14 @@ enum race_result fixfinder_race(const volatile uint32_t *clock)
         if (remote&(DOOM_BUTTON_FORWARD|DOOM_BUTTON_FIRE)) keys|=KEY_ERASE;
         if (remote&DOOM_BUTTON_BACK) keys|=KEY_DOWN;
         while ((int32_t)(now-step)>=0) {
-            advance(&state,keys);
-            step+=16+(state.ticks&1U);
+            advance(state,keys);
+            step+=16+(state->ticks&1U);
         }
         if ((int32_t)(now-render)>=0) {
-            fixfinder_set_led(state.flash ? FIXFINDER_LED_RED :
-                              elapsed >= TIME_LIMIT-7000 || abs(state.lane)>234 ?
+            fixfinder_set_led(state->flash ? FIXFINDER_LED_RED :
+                              elapsed >= TIME_LIMIT-7000 || abs(state->lane)>234 ?
                               FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
-            draw(image,&state,elapsed,first);
+            draw(image,state,elapsed,first);
             first=false;
             render=now+32;
         }

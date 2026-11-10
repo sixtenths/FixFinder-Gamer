@@ -1,4 +1,5 @@
 #include "arcade.h"
+#include "save_files.h"
 #ifdef FIXFINDER_EMMC_LIBRARY
 #include "game_library.h"
 #endif
@@ -262,7 +263,11 @@ static void hud(uint8_t *frame, enum game_id game, unsigned int score)
     reset_labels(false);
     text(8, 2, games[game].name, &ui_small, games[game].color, BG, false);
     number(211, 2, score);
+#ifdef FIXFINDER_SAVE_FILES
+    text(8, 146, "Down + Back to save", &ui_small, MUTED, BG, false);
+#else
     text(8, 146, "Hold Down + Back for menu", &ui_small, MUTED, BG, false);
+#endif
 }
 
 static bool finish(uint8_t *frame, const volatile uint32_t *clock, bool won)
@@ -289,45 +294,51 @@ static unsigned int random_cell(unsigned int *seed, unsigned int cells)
     return (*seed >> 16) % cells;
 }
 
-static void snake(uint8_t *frame, const volatile uint32_t *clock)
+static void snake(uint8_t *frame, const volatile uint32_t *clock, bool resume)
 {
     enum { C = 28, R = 15, CELLS = C*R, TILE = 8 };
-    unsigned int seed = *clock;
     bool won;
     do {
-        uint16_t body[CELLS] = {7*C+7, 7*C+6, 7*C+5};
-        unsigned int length = 3, food = 7*C+16;
-        int heading = 0, next = 0;
+        struct {
+            uint16_t body[CELLS];
+            unsigned int seed, length, food;
+            int heading, next;
+        } state = {{7*C+7, 7*C+6, 7*C+5}, *clock, 3, 7*C+16, 0, 0};
+        if (resume) fixfinder_save_read("SNAKE", &state, sizeof state);
+        resume = false;
         uint32_t step = *clock + 190, food_flash = *clock;
         bool redraw = true;
         won = false;
         for (;;) {
             uint32_t now = *clock, keys = fixfinder_keys(now);
-            if (fixfinder_arcade_exit(keys, now)) return;
-            int turn = direction(keys, next);
-            if (((turn + 2) & 3) != heading) next = turn;
+            if (fixfinder_arcade_suspend(keys, now)) {
+                fixfinder_save_write("SNAKE", &state, sizeof state);
+                return;
+            }
+            int turn = direction(keys, state.next);
+            if (((turn + 2) & 3) != state.heading) state.next = turn;
             if ((int32_t)(now - step) >= 0) {
-                heading = next;
-                int x = body[0]%C + dx[heading], y = body[0]/C + dy[heading];
+                state.heading = state.next;
+                int x = state.body[0]%C + dx[state.heading], y = state.body[0]/C + dy[state.heading];
                 if (x < 0 || x >= C || y < 0 || y >= R) break;
                 unsigned int cell = y*C+x;
-                bool grow = cell == food;
-                unsigned int retained = length - !grow;
+                bool grow = cell == state.food;
+                unsigned int retained = state.length - !grow;
                 bool hit = false;
-                for (unsigned int i = 0; i < retained; ++i) hit |= body[i] == cell;
+                for (unsigned int i = 0; i < retained; ++i) hit |= state.body[i] == cell;
                 if (hit) break;
-                memmove(body+1, body, retained*sizeof *body);
-                body[0] = cell;
-                if (grow && ++length == CELLS) { won = true; break; }
+                memmove(state.body+1, state.body, retained*sizeof *state.body);
+                state.body[0] = cell;
+                if (grow && ++state.length == CELLS) { won = true; break; }
                 if (grow) {
                     food_flash = now + 220;
                     do {
-                        food = random_cell(&seed, CELLS);
+                        state.food = random_cell(&state.seed, CELLS);
                         hit = false;
-                        for (unsigned int i = 0; i < length; ++i) hit |= body[i] == food;
+                        for (unsigned int i = 0; i < state.length; ++i) hit |= state.body[i] == state.food;
                     } while (hit);
                 }
-                step = now + (length < 22 ? 190 - length*5 : 80);
+                step = now + (state.length < 22 ? 190 - state.length*5 : 80);
                 redraw = true;
             }
             fixfinder_set_led((int32_t)(food_flash - now) > 0 ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
@@ -336,11 +347,11 @@ static void snake(uint8_t *frame, const volatile uint32_t *clock)
                 wait_until(clock,now+4);
                 continue;
             }
-            hud(frame, SNAKE, length - 3);
+            hud(frame, SNAKE, state.length - 3);
             box(frame, 7, 19, 226, 122, PANEL);
-            box(frame, 9+(food%C)*TILE, 21+(food/C)*TILE, 5, 5, RED);
-            for (unsigned int i = 0; i < length; ++i)
-                box(frame, 8+(body[i]%C)*TILE, 20+(body[i]/C)*TILE, 7, 7, i ? GREEN : WHITE);
+            box(frame, 9+(state.food%C)*TILE, 21+(state.food/C)*TILE, 5, 5, RED);
+            for (unsigned int i = 0; i < state.length; ++i)
+                box(frame, 8+(state.body[i]%C)*TILE, 20+(state.body[i]/C)*TILE, 7, 7, i ? GREEN : WHITE);
             present(frame);
             redraw = false;
         }
@@ -348,7 +359,7 @@ static void snake(uint8_t *frame, const volatile uint32_t *clock)
 }
 
 #ifdef FIXFINDER_PACMAN
-bool fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock);
+bool fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock, bool resume);
 #else
 /* A compact original maze. Spaces are traversable and dots are collectible. */
 static const char maze_map[][22] = {
@@ -374,69 +385,78 @@ static bool maze_open(int x, int y)
     return x >= 0 && x < 21 && y >= 0 && y < 15 && maze_map[y][x] != '#';
 }
 
-static void maze(uint8_t *frame, const volatile uint32_t *clock)
+static void maze(uint8_t *frame, const volatile uint32_t *clock, bool resume)
 {
     do {
-        char dots[15][22];
-        memcpy(dots, maze_map, sizeof dots);
-        unsigned int left = 0, score = 0;
+        struct {
+            char dots[15][22];
+            unsigned int left, score, turns, power_ms, safe_ms;
+            int x, y, heading, next, lives, gx[2], gy[2], gd[2];
+        } state = {.safe_ms=900,.x=10,.y=11,.heading=2,.next=2,.lives=3,
+                   .gx={1,19},.gy={7,7},.gd={0,2}};
+        memcpy(state.dots, maze_map, sizeof state.dots);
         for (int y = 0; y < 15; ++y)
             for (int x = 0; x < 21; ++x)
-                left += dots[y][x] == '.' || dots[y][x] == 'o';
-        int x = 10, y = 11, heading = 2, next = 2, lives = 3;
-        int gx[2] = {1,19}, gy[2] = {7,7}, gd[2] = {0,2};
-        uint32_t step = *clock + 130, power_until = *clock, safe_until = *clock + 900;
-        unsigned int turns = 0;
-        while (left && lives) {
+                state.left += state.dots[y][x] == '.' || state.dots[y][x] == 'o';
+        if (resume) fixfinder_save_read("MAZE", &state, sizeof state);
+        resume = false;
+        uint32_t step = *clock + 130, power_until = *clock + state.power_ms;
+        uint32_t safe_until = *clock + state.safe_ms;
+        while (state.left && state.lives) {
             uint32_t now = *clock, keys = fixfinder_keys(now);
-            if (fixfinder_arcade_exit(keys, now)) return;
-            next = direction(keys, next);
+            if (fixfinder_arcade_suspend(keys, now)) {
+                state.power_ms = (int32_t)(power_until-now) > 0 ? power_until-now : 0;
+                state.safe_ms = (int32_t)(safe_until-now) > 0 ? safe_until-now : 0;
+                fixfinder_save_write("MAZE", &state, sizeof state);
+                return;
+            }
+            state.next = direction(keys, state.next);
             bool powered = (int32_t)(power_until - now) > 0;
             if ((int32_t)(now-step) >= 0) {
-                if (maze_open(x+dx[next], y+dy[next])) heading = next;
-                if (maze_open(x+dx[heading], y+dy[heading])) { x+=dx[heading]; y+=dy[heading]; }
-                if (dots[y][x] == '.' || dots[y][x] == 'o') {
-                    if (dots[y][x] == 'o') { power_until = now+5500; powered = true; }
-                    dots[y][x] = ' ';
-                    --left; ++score;
+                if (maze_open(state.x+dx[state.next], state.y+dy[state.next])) state.heading = state.next;
+                if (maze_open(state.x+dx[state.heading], state.y+dy[state.heading])) { state.x+=dx[state.heading]; state.y+=dy[state.heading]; }
+                if (state.dots[state.y][state.x] == '.' || state.dots[state.y][state.x] == 'o') {
+                    if (state.dots[state.y][state.x] == 'o') { power_until = now+5500; powered = true; }
+                    state.dots[state.y][state.x] = ' ';
+                    --state.left; ++state.score;
                 }
-                if (++turns % 2 == 0) for (int g = 0; g < 2; ++g) {
+                if (++state.turns % 2 == 0) for (int g = 0; g < 2; ++g) {
                     int best = 1000, move = -1;
                     for (int d = 0; d < 4; ++d) {
-                        int nx = gx[g]+dx[d], ny = gy[g]+dy[d];
+                        int nx = state.gx[g]+dx[d], ny = state.gy[g]+dy[d];
                         if (!maze_open(nx, ny)) continue;
-                        int ax = nx-x, ay = ny-y;
+                        int ax = nx-state.x, ay = ny-state.y;
                         int dist = (ax<0?-ax:ax)+(ay<0?-ay:ay);
-                        int rank = (powered ? -dist : dist) + (d == ((gd[g]+2)&3) ? 80 : 0);
+                        int rank = (powered ? -dist : dist) + (d == ((state.gd[g]+2)&3) ? 80 : 0);
                         if (rank < best) { best = rank; move = d; }
                     }
-                    if (move >= 0) { gd[g]=move; gx[g]+=dx[move]; gy[g]+=dy[move]; }
+                    if (move >= 0) { state.gd[g]=move; state.gx[g]+=dx[move]; state.gy[g]+=dy[move]; }
                 }
                 step = now+125;
             }
-            for (int g=0; g<2; ++g) if (gx[g]==x && gy[g]==y) {
-                if (powered) { gx[g]=g?19:1; gy[g]=7; score+=10; }
+            for (int g=0; g<2; ++g) if (state.gx[g]==state.x && state.gy[g]==state.y) {
+                if (powered) { state.gx[g]=g?19:1; state.gy[g]=7; state.score+=10; }
                 else if ((int32_t)(now-safe_until)>=0) {
-                    --lives; x=10; y=11; safe_until=now+1400;
+                    --state.lives; state.x=10; state.y=11; safe_until=now+1400;
                 }
             }
-            fixfinder_set_led(lives <= 1 ? FIXFINDER_LED_RED :
-                              lives == 2 || powered ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
-            hud(frame, MAZE, score);
+            fixfinder_set_led(state.lives <= 1 ? FIXFINDER_LED_RED :
+                              state.lives == 2 || powered ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
+            hud(frame, MAZE, state.score);
             for (int row=0; row<15; ++row) for (int col=0; col<21; ++col) {
                 int px=36+col*8, py=19+row*8;
-                if (dots[row][col]=='#') box(frame,px,py,8,8,BLUE);
-                if (dots[row][col]=='.') box(frame,px+3,py+3,2,2,MUTED);
-                if (dots[row][col]=='o') box(frame,px+2,py+2,4,4,WHITE);
+                if (state.dots[row][col]=='#') box(frame,px,py,8,8,BLUE);
+                if (state.dots[row][col]=='.') box(frame,px+3,py+3,2,2,MUTED);
+                if (state.dots[row][col]=='o') box(frame,px+2,py+2,4,4,WHITE);
             }
-            box(frame,37+x*8,20+y*8,6,6,YELLOW);
-            box(frame,37+x*8+(heading==0?4:0),22+y*8,2,2,BG);
-            for (int g=0; g<2; ++g) box(frame,37+gx[g]*8,20+gy[g]*8,6,6,powered?MUTED:(g?PINK:RED));
-            for (int i=0;i<lives;++i) box(frame,12,25+10*i,5,5,YELLOW);
+            box(frame,37+state.x*8,20+state.y*8,6,6,YELLOW);
+            box(frame,37+state.x*8+(state.heading==0?4:0),22+state.y*8,2,2,BG);
+            for (int g=0; g<2; ++g) box(frame,37+state.gx[g]*8,20+state.gy[g]*8,6,6,powered?MUTED:(g?PINK:RED));
+            for (int i=0;i<state.lives;++i) box(frame,12,25+10*i,5,5,YELLOW);
             present(frame);
             wait_until(clock,now+32);
         }
-        if (!finish(frame, clock, left==0)) return;
+        if (!finish(frame, clock, state.left==0)) return;
     } while (true);
 }
 
@@ -447,68 +467,76 @@ static int clamp(int value, int lo, int hi)
     return value < lo ? lo : value > hi ? hi : value;
 }
 
-static void paddle_game(uint8_t *frame, const volatile uint32_t *clock, bool bricks)
+static void paddle_game(uint8_t *frame, const volatile uint32_t *clock, bool bricks, bool resume)
 {
     /* Half-pixel coordinates keep the same movement speed at twice the tick rate. */
     enum { P = 2 };
+    const char *save = bricks ? "BREAKOUT" : "PONG";
     do {
-        int player = 65*P, opponent = 65*P, x = 120*P, y = 85*P, vx = -3, vy = 2;
-        unsigned int score = 0, other = 0;
-        uint16_t rows[4] = {0x3ff,0x3ff,0x3ff,0x3ff};
-        if (bricks) player = 105*P;
-        while (score < (bricks ? 40U : 5U) && other < (bricks ? 3U : 5U)) {
+        struct {
+            int player, opponent, x, y, vx, vy;
+            unsigned int score, other;
+            uint16_t rows[4];
+        } state = { (bricks ? 105 : 65)*P, 65*P, 120*P, 85*P, -3, 2,
+                    0, 0, {0x3ff,0x3ff,0x3ff,0x3ff} };
+        if (resume) fixfinder_save_read(save, &state, sizeof state);
+        resume = false;
+        while (state.score < (bricks ? 40U : 5U) && state.other < (bricks ? 3U : 5U)) {
             uint32_t now = *clock, keys = fixfinder_keys(now);
-            if (fixfinder_arcade_exit(keys, now)) return;
-            if (bricks) {
-                if (keys == KEY_BACK) player -= 5;
-                if (keys == KEY_ENTER) player += 5;
-                player = clamp(player, 8*P, 199*P);
-            } else {
-                if (keys == KEY_ERASE) player -= 5;
-                if (keys == KEY_DOWN) player += 5;
-                player = clamp(player, 20*P, 117*P);
-                opponent = clamp(opponent + (y < opponent+10*P ? -2 : 2), 20*P, 117*P);
+            if (fixfinder_arcade_suspend(keys, now)) {
+                fixfinder_save_write(save, &state, sizeof state);
+                return;
             }
-            x += vx; y += vy;
-            if (y <= 20*P) { y=20*P; vy=2; }
-            if (!bricks && y >= 137*P) { y=137*P; vy=-2; }
             if (bricks) {
-                if (x <= 8*P || x >= 228*P) { x=clamp(x,8*P,228*P); vx=-vx; }
-                if (vy > 0 && y >= 130*P && y <= 135*P && x+4*P >= player && x < player+32*P) vy=-2;
-                if (y >= 141*P) { ++other; x=120*P; y=94*P; vy=-2; }
-                if (y >= 30*P && y < 66*P && x >= 19*P && x < 219*P) {
-                    int row=(y-30*P)/(9*P), col=(x-19*P)/(20*P);
-                    if (rows[row] & (1U << col)) { rows[row] ^= 1U << col; ++score; vy=-vy; }
+                if (keys == KEY_BACK) state.player -= 5;
+                if (keys == KEY_ENTER) state.player += 5;
+                state.player = clamp(state.player, 8*P, 199*P);
+            } else {
+                if (keys == KEY_ERASE) state.player -= 5;
+                if (keys == KEY_DOWN) state.player += 5;
+                state.player = clamp(state.player, 20*P, 117*P);
+                state.opponent = clamp(state.opponent + (state.y < state.opponent+10*P ? -2 : 2), 20*P, 117*P);
+            }
+            state.x += state.vx; state.y += state.vy;
+            if (state.y <= 20*P) { state.y=20*P; state.vy=2; }
+            if (!bricks && state.y >= 137*P) { state.y=137*P; state.vy=-2; }
+            if (bricks) {
+                if (state.x <= 8*P || state.x >= 228*P) { state.x=clamp(state.x,8*P,228*P); state.vx=-state.vx; }
+                if (state.vy > 0 && state.y >= 130*P && state.y <= 135*P && state.x+4*P >= state.player && state.x < state.player+32*P) state.vy=-2;
+                if (state.y >= 141*P) { ++state.other; state.x=120*P; state.y=94*P; state.vy=-2; }
+                if (state.y >= 30*P && state.y < 66*P && state.x >= 19*P && state.x < 219*P) {
+                    int row=(state.y-30*P)/(9*P), col=(state.x-19*P)/(20*P);
+                    if (state.rows[row] & (1U << col)) { state.rows[row] ^= 1U << col; ++state.score; state.vy=-state.vy; }
                 }
             } else {
-                if (vx<0 && x<=17*P && x>=11*P && y+4*P>=player && y<player+23*P) vx=3;
-                if (vx>0 && x>=219*P && x<=225*P && y+4*P>=opponent && y<opponent+23*P) vx=-3;
-                if (x<6*P || x>230*P) {
-                    if (x<6*P) ++other; else ++score;
-                    vx = x<6*P ? 3 : -3;
-                    x=120*P; y=80*P;
+                if (state.vx<0 && state.x<=17*P && state.x>=11*P && state.y+4*P>=state.player && state.y<state.player+23*P) state.vx=3;
+                if (state.vx>0 && state.x>=219*P && state.x<=225*P && state.y+4*P>=state.opponent && state.y<state.opponent+23*P) state.vx=-3;
+                if (state.x<6*P || state.x>230*P) {
+                    if (state.x<6*P) ++state.other; else ++state.score;
+                    state.vx = state.x<6*P ? 3 : -3;
+                    state.x=120*P; state.y=80*P;
                 }
             }
-            fixfinder_set_led(bricks && other >= 2 ? FIXFINDER_LED_RED :
-                              other > (bricks ? 0 : score) ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
-            hud(frame,bricks?BREAKOUT:PONG,score);
-            number(183, 2, bricks ? 3-other : other);
+            fixfinder_set_led(bricks && state.other >= 2 ? FIXFINDER_LED_RED :
+                              state.other > (bricks ? 0 : state.score) ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
+            hud(frame,bricks?BREAKOUT:PONG,state.score);
+            number(183, 2, bricks ? 3-state.other : state.other);
             box(frame, 7, 18, 226, 2, PANEL);
             box(frame, 7, 141, 226, 2, PANEL);
             if (bricks) {
                 for (int row=0; row<4; ++row) for (int col=0; col<10; ++col)
-                    if (rows[row] & (1U << col)) box(frame,19+col*20,30+row*9,18,7,RED+row);
-                box(frame,player/P,134,32,4,WHITE);
+                    if (state.rows[row] & (1U << col)) box(frame,19+col*20,30+row*9,18,7,RED+row);
+                box(frame,state.player/P,134,32,4,WHITE);
             } else {
                 for (int i=24;i<137;i+=9) box(frame,119,i,2,5,PANEL);
-                box(frame,12,player/P,4,23,GREEN);
-                box(frame,224,opponent/P,4,23,ORANGE);
+                box(frame,12,state.player/P,4,23,GREEN);
+                box(frame,224,state.opponent/P,4,23,ORANGE);
             }
-            box(frame,x/P,y/P,4,4,WHITE);
+            box(frame,state.x/P,state.y/P,4,4,WHITE);
             present(frame);
             wait_until(clock,now+16);
         }
-        if (!finish(frame,clock,score==(bricks?40U:5U))) return;
+        if (!finish(frame,clock,state.score==(bricks?40U:5U))) return;
     } while (true);
 }
 
@@ -704,7 +732,18 @@ static void selector(uint8_t *frame, unsigned int selected)
     title(86,games[selected].name);
     text(120, 105, games[selected].genre, &ui_small, accent, PANEL, true);
     for (unsigned int i=0;i<GAME_COUNT;++i)
-        box(frame,120-(GAME_COUNT*10-4)/2+i*10,129,6,3,i==selected?accent:EDGE);
+        box(frame,120-(GAME_COUNT*10-4)/2+i*10,123,6,3,i==selected?accent:EDGE);
+#ifdef FIXFINDER_SAVE_FILES
+    if (fixfinder_save_notice) {
+        text(120, 127, fixfinder_save_notice, &ui_small, WHITE, BG, true);
+    }
+#ifndef FIXFINDER_ARCADE_ONLY
+    else if (selected != DOOM)
+#else
+    else
+#endif
+        text(120, 127, "Back: new run", &ui_small, MUTED, BG, true);
+#endif
     text(12, 142, "Erase  Prev", &ui_small, MUTED, BG, false);
     text(86, 142, "Down  Next", &ui_small, MUTED, BG, false);
     box(frame,166,140,62,17,accent);
@@ -729,10 +768,20 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
     unpack_art(doom_art,sizeof doom_art,doom_logo_data);
 #endif
     doom_display_set_palette(palette);
-    bool redraw = true;
+    bool redraw = true, wait_for_release = false;
     for (;;) {
         uint32_t now=*clock, keys=fixfinder_keys(now);
-        if (keys!=previous) {
+        if (!keys) wait_for_release = false;
+        if (!wait_for_release && keys!=previous) {
+            bool resume = keys == KEY_ENTER;
+            bool launch = resume;
+#ifdef FIXFINDER_SAVE_FILES
+            if (keys == KEY_ERASE || keys == KEY_DOWN) fixfinder_save_notice = NULL;
+#ifndef FIXFINDER_ARCADE_ONLY
+            if (selected != DOOM)
+#endif
+                launch |= keys == KEY_BACK;
+#endif
             if (keys==KEY_ERASE) {
                 selected=(selected+GAME_COUNT-1)%GAME_COUNT;
                 redraw = true;
@@ -741,7 +790,10 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                 selected=(selected+1)%GAME_COUNT;
                 redraw = true;
             }
-            if (keys==KEY_ENTER && previous==0) {
+            if (launch && previous==0) {
+#ifdef FIXFINDER_SAVE_FILES
+                fixfinder_save_notice = NULL;
+#endif
                 fixfinder_set_led(FIXFINDER_LED_YELLOW);
                 splash(frame,clock,selected);
                 release_lcd_shadow();
@@ -764,10 +816,10 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                     return;
 #endif
 #endif
-                case SNAKE: snake(frame,clock); break;
+                case SNAKE: snake(frame,clock,resume); break;
                 case MAZE:
 #ifdef FIXFINDER_PACMAN
-                    if (!fixfinder_pacman_run(frame,clock)) {
+                    if (!fixfinder_pacman_run(frame,clock,resume)) {
                         fixfinder_set_led(FIXFINDER_LED_RED);
                         doom_display_set_palette(palette);
                         text(120, 125, "Could not load Pac-Man ROM", &ui_small, RED, PANEL, true);
@@ -776,14 +828,15 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                     }
                     doom_display_set_palette(palette);
 #else
-                    maze(frame,clock);
+                    maze(frame,clock,resume);
 #endif
                     break;
-                case PONG: paddle_game(frame,clock,false); break;
-                case BREAKOUT: paddle_game(frame,clock,true); break;
+                case PONG: paddle_game(frame,clock,false,resume); break;
+                case BREAKOUT: paddle_game(frame,clock,true,resume); break;
                 case DINO: {
                     unsigned int score;
-                    while (fixfinder_dino_run(clock,&score)) {
+                    while (fixfinder_dino_run(clock,&score,resume)) {
+                        resume = false;
                         hud(frame,DINO,score);
                         if (!finish(frame,clock,false)) break;
                         release_lcd_shadow();
@@ -793,7 +846,8 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                 case RACER: {
                     enum race_result result;
                     do {
-                        result=fixfinder_race(clock);
+                        result=fixfinder_race(clock,resume);
+                        resume = false;
                         if (result==RACE_EXIT) break;
                         hud(frame,RACER,0);
                         if (!finish(frame,clock,result==RACE_FINISHED)) break;
@@ -803,6 +857,7 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                 }
                 }
                 keys=fixfinder_keys(*clock);
+                wait_for_release = keys != 0;
                 redraw = true;
             }
             previous=keys;

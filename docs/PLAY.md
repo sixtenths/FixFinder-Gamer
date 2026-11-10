@@ -1,6 +1,14 @@
 # Play and stream
 
-After boot, the HackerZone Arcade build opens the game selector. **Erase** goes to the previous game, **Down** goes to the next game, and **Enter** launches it. Hold **Down + Back** for about one second to return to the selector. Over USB, use **Up / Down**, **Enter**, and hold **Backspace** to return.
+After boot, the HackerZone Arcade build opens the game selector. **Erase** goes to the previous game, **Down** goes to the next game, and **Enter** launches it. Over USB, use **Up / Down** to browse and **Enter** to launch. See the save controls below for returning to the selector.
+
+## Save and resume
+
+On save-enabled firmware, press **Down + Back** during an arcade round to save it and return to the selector. In the USB viewer, press **Backspace**. Wait for **Progress saved**. Select the game and press **Enter** to resume. Press **Back** on the scanner or **Left Arrow** in the viewer to start a new run without using the saved checkpoint. Each arcade game keeps one suspended round. A new suspend becomes that game's current checkpoint. After a round ends, hold **Down + Back** or **Backspace** to return. Builds without saves use the same hold to exit a round.
+
+In DOOM, tap **Down + Back** or press **Esc**, select **Save Game**, then choose one of the eight slots. Open **Load Game** and choose the slot to continue. The GBADoom checkpoint restores the saved map, weapons and ammo and restarts at the map entrance. It does not record exact position or changes to the level.
+
+The save files live on FAT32 eMMC and stay there during USB firmware updates. The one-map and full episode builds have separate DOOM slot files. [Build with save files](SETUP.md#enable-save-files)
 
 ## DOOM controls
 

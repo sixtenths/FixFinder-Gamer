@@ -4,6 +4,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-bool fixfinder_dino_run(const volatile uint32_t *clock, unsigned int *score);
+bool fixfinder_dino_run(const volatile uint32_t *clock, unsigned int *score, bool resume);
 
 #endif

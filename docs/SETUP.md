@@ -187,6 +187,17 @@ python scripts/Install-UsbGame.py --wait 45 $game
 
 If a verified `PACMAN.ROM` is already on your scanner’s FAT32 eMMC, use `-PacmanFromEmmc` instead. The project scanner uses `-Episode -PacmanFromEmmc` so both the DOOM map pack and Pac-Man ROM stay on eMMC during firmware updates.
 
+## Enable save files
+
+The project scanner uses this build to keep a suspended round for each arcade title and eight DOOM checkpoints. It uses the previously provisioned episode map pack and Pac-Man ROM.
+
+```powershell
+$game, $pack = ./scripts/Build-FixFinderDoom.ps1 -Episode -PacmanFromEmmc -SaveFiles
+python scripts/Install-UsbGame.py --wait 45 $game
+```
+
+Omit `-Episode` for the one-map build. Use `./scripts/Build-UsbLoader.ps1 -ArcadeOnly -SaveFiles` to build the arcade without DOOM. Save files use alternating copies on the mounted FAT32 volume, with a checksum checked on read. The current eMMC write guard enables writes only for the development scanner's verified MCU and storage identities. Other units need a separately verified storage configuration. [Save controls](PLAY.md#save-and-resume)
+
 ## Check eMMC
 
 With the viewer closed, `python scripts/Read-FixFinderStorage.py --serial $serial` reports the eMMC capacity on builds with the storage probe enabled.

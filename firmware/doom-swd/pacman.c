@@ -3,6 +3,8 @@
  * Z80 interpreter license and attribution are in pacman/LICENSE.
  */
 #include "arcade.h"
+#include "save_files.h"
+#include <stddef.h>
 #include "display.h"
 #include "usb_video.h"
 #include "../lcd/fixfinder_io.h"
@@ -22,13 +24,24 @@ enum {
     GFX=0x4000, COLOR=0x6000, LOOKUP=0x6020, PAUSE_BG=32, PAUSE_INK=33,
     GAME_MODE=0x200, LIVES=0x214
 };
-static struct {
+struct pacman_board {
     z80 cpu;
     uint8_t video[1024], colors[1024], ram[1024], pos[16];
     uint8_t in0, in1, vector, sound[32];
     bool irq, flip, sound_enabled;
     uint64_t dirty_columns;
-} board __attribute__((section(".arcade_visual")));
+};
+static struct pacman_board board __attribute__((section(".arcade_visual")));
+
+/* Recreate the host callbacks and renderer on launch. Only emulated
+ * registers, RAM and counters belong in the portable save payload. */
+#define MACHINE_OFFSET offsetof(struct pacman_board, cpu.cyc)
+struct pacman_save {
+    uint8_t machine[sizeof board - MACHINE_OFFSET];
+    uint32_t cycle, frames, restart, attract_frames, damage_until;
+    unsigned int previous_lives;
+    bool ready, played;
+};
 static uint8_t rgb[768] __attribute__((section(".arcade_visual")));
 
 static uint8_t bus_read(void *state, uint16_t addr)
@@ -216,7 +229,7 @@ static void render(uint8_t *frame, bool first, uint8_t *previous, uint8_t *backg
     doom_usb_video_native_end();
 }
 
-static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
+static void play_pacman(uint8_t *frame, const volatile uint32_t *clock, bool resume)
 {
     fixfinder_set_led(FIXFINDER_LED_YELLOW);
     memset(&board,0,sizeof board);
@@ -238,20 +251,25 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
     board.cpu.port_out=port_out;
     uint8_t *previous=malloc(VIEW*H);
     uint8_t *background=malloc(VIEW*H);
-    uint32_t step=*clock, cycle=0, frames=0, restart=0, attract_frames=0;
-    uint32_t damage_until=0;
-    unsigned int previous_lives=0;
-    bool was_start=false, ready=false, first_draw=true, was_pause=false, paused=false, played=false;
+    struct pacman_save state = {0};
+    if (resume && fixfinder_save_read("PACMAN", &state, sizeof state))
+        memcpy((uint8_t *)&board + MACHINE_OFFSET, state.machine, sizeof state.machine);
+    uint32_t step=*clock;
+    bool was_start=false, first_draw=true, was_pause=false, paused=false;
     for (;;) {
         uint32_t now=*clock, keys=fixfinder_keys(now);
-        if (fixfinder_arcade_exit(keys,now)) {
+        if (fixfinder_arcade_suspend(keys,now)) {
             fixfinder_tone(0);
+#ifdef FIXFINDER_SAVE_FILES
+            memcpy(state.machine, (uint8_t *)&board + MACHINE_OFFSET, sizeof state.machine);
+            fixfinder_save_write("PACMAN", &state, sizeof state);
+#endif
             free(previous);
             free(background);
             return;
         }
         bool pause=(keys==(KEY_ENTER|KEY_BACK));
-        bool toggle=ready && pause && !was_pause;
+        bool toggle=state.ready && pause && !was_pause;
         was_pause=pause;
         if (toggle) {
             paused=!paused;
@@ -262,7 +280,7 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
             step=*clock;
         }
         bool start=(keys==(KEY_ERASE|KEY_ENTER));
-        if (!paused && ready && start && !was_start) restart=frames+1;
+        if (!paused && state.ready && start && !was_start) state.restart=state.frames+1;
         was_start=start;
         if (paused) {
             if (!toggle && doom_usb_video_native_requested())
@@ -281,46 +299,46 @@ static void play_pacman(uint8_t *frame, const volatile uint32_t *clock)
          */
         /* $4E00/$4E01 are the Midway ROM's game/intro modes. During the
          * self-test, RAM gets overwritten with transient test patterns. */
-        attract_frames=board.ram[GAME_MODE]==1 && !board.ram[0x201]?attract_frames+1:0;
-        if (!ready && (attract_frames>=20 || frames==700)) {
-            ready=true;
-            restart=frames+1;
+        state.attract_frames=board.ram[GAME_MODE]==1 && !board.ram[0x201]?state.attract_frames+1:0;
+        if (!state.ready && (state.attract_frames>=20 || state.frames==700)) {
+            state.ready=true;
+            state.restart=state.frames+1;
         }
-        uint32_t elapsed=restart?frames-restart:100;
+        uint32_t elapsed=state.restart?state.frames-state.restart:100;
         if (elapsed<8) board.in0&=~0x20;
         board.in1=elapsed>=24 && elapsed<54?0xdf:0xff;
-        cycle+=50688;
-        while ((int32_t)(board.cpu.cyc-cycle)<0) z80_step(&board.cpu);
+        state.cycle+=50688;
+        while ((int32_t)(board.cpu.cyc-state.cycle)<0) z80_step(&board.cpu);
         if (board.irq) z80_gen_int(&board.cpu,board.vector);
-        if (ready) {
+        if (state.ready) {
             fixfinder_tone(beeper_pitch());
             uint8_t mode=board.ram[GAME_MODE];
             if (mode==3) {
-                played=true;
+                state.played=true;
                 unsigned int lives=board.ram[LIVES];
-                if (lives<previous_lives) damage_until=frames+36;
-                previous_lives=lives;
-                fixfinder_set_led(lives<=1 || (int32_t)(damage_until-frames)>0 ? FIXFINDER_LED_RED :
+                if (lives<state.previous_lives) state.damage_until=state.frames+36;
+                state.previous_lives=lives;
+                fixfinder_set_led(lives<=1 || (int32_t)(state.damage_until-state.frames)>0 ? FIXFINDER_LED_RED :
                                   lives==2 ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
             } else {
-                previous_lives=0;
-                damage_until=frames;
-                fixfinder_set_led(played && mode==1 ? FIXFINDER_LED_RED : FIXFINDER_LED_YELLOW);
+                state.previous_lives=0;
+                state.damage_until=state.frames;
+                fixfinder_set_led(state.played && mode==1 ? FIXFINDER_LED_RED : FIXFINDER_LED_YELLOW);
             }
         }
-        if (ready && (int32_t)(*clock-step)<12) {
+        if (state.ready && (int32_t)(*clock-step)<12) {
             render(frame,first_draw,previous,background,false);
             first_draw=false;
             doom_usb_video_capture(frame,rgb);
         }
-        ++frames;
-        step+=16+(frames&1);
+        ++state.frames;
+        step+=16+(state.frames&1);
         if ((int32_t)(*clock-step)>50) step=*clock;
         while ((int32_t)(*clock-step)<0) {}
     }
 }
 
-bool fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock)
+bool fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock, bool resume)
 {
 #ifdef FIXFINDER_PACMAN_EMMC
     uint8_t *rom = malloc(PACMAN_ROM_SIZE);
@@ -331,7 +349,7 @@ bool fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock)
     }
     pacman_rom = rom;
 #endif
-    play_pacman(frame, clock);
+    play_pacman(frame, clock, resume);
 #ifdef FIXFINDER_PACMAN_EMMC
     pacman_rom = NULL;
     free(rom);

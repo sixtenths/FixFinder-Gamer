@@ -15,6 +15,7 @@ param(
     [string[]]$PacmanRom,
     [switch]$StorageProbe,
     [switch]$EmmcLibrary,
+    [switch]$SaveFiles,
     [switch]$PacmanFromEmmc,
     [string]$ProvisionDoomMaps,
     [switch]$PassThru
@@ -25,6 +26,7 @@ if ($BoardSource -and $FixFinderLcd) { throw 'Select one display backend.' }
 if ($Arcade -and (!$UsbGame -or !$FixFinderLcd)) { throw '-Arcade requires -FixFinderLcd and -UsbGame.' }
 if ($PacmanRom -and !$Arcade) { throw '-PacmanRom requires -Arcade.' }
 if ($StorageProbe -and !$Arcade) { throw '-StorageProbe requires -Arcade.' }
+if ($SaveFiles) { $EmmcLibrary = $true }
 if ($EmmcLibrary -and !$Arcade) { throw '-EmmcLibrary requires -Arcade.' }
 if ($PacmanFromEmmc -and !$EmmcLibrary) { throw '-PacmanFromEmmc requires -EmmcLibrary.' }
 if ($ProvisionDoomMaps -and !$EmmcLibrary) { throw '-ProvisionDoomMaps requires -EmmcLibrary.' }
@@ -93,11 +95,32 @@ New-Item -ItemType Directory -Path $build -Force | Out-Null
 Push-Location $root
 try {
     $engineFlags = @('-Os', '-ffunction-sections', '-fdata-sections', '-fno-common',
-        '-DHAVE_CONFIG_H', '-std=gnu23', '-include', 'stdint.h', "-I$engineIncludes",
+        '-DHAVE_CONFIG_H', '-std=gnu23', '-include', 'stdint.h', "-I$engineIncludes", '-Ifirmware/doom-swd',
         '-Wno-incompatible-pointer-types', '-Wno-implicit-function-declaration')
     # A single-map image boots directly into E1M1. Avoid a 64-bit access to the
     # WAD directory, which the converter only aligns to four bytes.
     Replace-EngineSource d_main 'D_StartTitle\(\);\s*// start up intro loop' 'G_DeferedInitNew(sk_medium, 1, 1);'
+    if ($SaveFiles) {
+        Replace-EngineSource g_game '#include "gba_functions.h"' @'
+#include "gba_functions.h"
+#include "doom_saves.h"
+#define LoadSRAM fixfinder_doom_load
+#define SaveSRAM fixfinder_doom_save
+'@
+        Replace-EngineSource g_game '    SaveSRAM\(savebuffer, savebuffersize, 0\);' @'
+    if (!SaveSRAM(savebuffer, savebuffersize, 0)) {
+        Z_Free(savebuffer);
+        _g->player.message = "Save failed";
+        return;
+    }
+'@
+        Replace-EngineSource g_game '(?s)    if\(savedata->save_present != 1\)\s*return;' @'
+    if (savedata->save_present != 1) {
+        Z_Free(loadbuffer);
+        return;
+    }
+'@
+    }
     $wadSource = Get-Content -LiteralPath (Join-Path $source 'source/w_wad.c') -Raw
     $wadLookup = '(?s)int_64_t nameint = 0;.*?if\(nameint == nameint2\)'
     if ([regex]::Matches($wadSource, $wadLookup).Count -ne 1) { throw 'Unexpected WAD lookup layout.' }
@@ -247,6 +270,7 @@ node->m_tnext = free_secnodes;
     $display = Join-Path $build 'display.o'
     if ($Arcade) {
         $platformFlags += '-DFIXFINDER_ARCADE'
+        if ($SaveFiles) { $platformFlags += '-DFIXFINDER_SAVE_FILES' }
         if ($PacmanFromEmmc) {
             $platformFlags += '-DFIXFINDER_PACMAN_EMMC'
             if ($PacmanRom) { $platformFlags += '-DFIXFINDER_PACMAN_SEED' }
@@ -269,7 +293,9 @@ fixfinder_maps_end:
                 Invoke-Gcc @('-c', $mapSource, '-o', $mapObject)
                 $boardObjects += $mapObject
             }
-            foreach ($unit in @('firmware/doom-swd/game_library.c', 'firmware/doom-swd/storage/ff.c')) {
+            $storageUnits = @('firmware/doom-swd/game_library.c', 'firmware/doom-swd/storage/ff.c')
+            if ($SaveFiles) { $storageUnits += 'firmware/doom-swd/save_files.c' }
+            foreach ($unit in $storageUnits) {
                 $object = Join-Path $build ((Split-Path -Leaf $unit) + '.o')
                 Invoke-Gcc ($platformFlags + @('-c', $unit, '-o', $object))
                 $boardObjects += $object

@@ -81,6 +81,10 @@ void fixfinder_game_run(void)
     /* TCM sections are NOLOAD. Initialize the public framebuffer explicitly. */
     memset(fixfinder_screen, 0, sizeof fixfinder_screen);
 #ifdef FIXFINDER_ARCADE_ONLY
+#ifdef FIXFINDER_SAVE_FILES
+    extern void fixfinder_emmc_probe(void);
+    fixfinder_emmc_probe();
+#endif
     fixfinder_arcade_run(fixfinder_screen, &milliseconds);
 #else
     fixfinder_game_main();
