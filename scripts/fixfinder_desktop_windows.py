@@ -7,6 +7,9 @@ from typing import NamedTuple
 from fixfinder_hid_windows import api
 
 WIDTH, HEIGHT = 320, 240
+DM_BITSPERPEL, DM_PELSWIDTH, DM_PELSHEIGHT, DM_DISPLAYFREQUENCY = 0x40000, 0x80000, 0x100000, 0x400000
+CDS_TEST = 2
+ENUM_CURRENT_SETTINGS = 0xffffffff
 user = c.WinDLL("user32", use_last_error=True)
 gdi = c.WinDLL("gdi32", use_last_error=True)
 ptr = c.c_void_p
@@ -34,11 +37,30 @@ class BitmapInfo(c.Structure):
                 ("colors", w.DWORD), ("important", w.DWORD), ("masks", w.DWORD * 3)]
 
 
+class DisplayMode(c.Structure):
+    _fields_ = [
+        ("device", w.WCHAR * 32), ("spec", w.WORD), ("driver", w.WORD),
+        ("size", w.WORD), ("extra", w.WORD), ("fields", w.DWORD),
+        ("position", w.POINT), ("orientation", w.DWORD), ("fixed_output", w.DWORD),
+        ("color", w.SHORT), ("duplex", w.SHORT), ("y_resolution", w.SHORT),
+        ("tt_option", w.SHORT), ("collate", w.SHORT), ("form", w.WCHAR * 32),
+        ("log_pixels", w.WORD), ("bits", w.DWORD), ("width", w.DWORD),
+        ("height", w.DWORD), ("flags", w.DWORD), ("frequency", w.DWORD),
+        ("icm_method", w.DWORD), ("icm_intent", w.DWORD), ("media_type", w.DWORD),
+        ("dither_type", w.DWORD), ("reserved1", w.DWORD), ("reserved2", w.DWORD),
+        ("panning_width", w.DWORD), ("panning_height", w.DWORD),
+    ]
+
+
 callback_type = c.WINFUNCTYPE(w.BOOL, w.HANDLE, dc, c.POINTER(w.RECT), w.LPARAM)
 enum_monitors = api(user, "EnumDisplayMonitors", w.BOOL, dc, ptr, callback_type, w.LPARAM)
 monitor_info = api(user, "GetMonitorInfoW", w.BOOL, w.HANDLE, c.POINTER(MonitorInfo))
 display_device = api(user, "EnumDisplayDevicesW", w.BOOL, w.LPCWSTR, w.DWORD,
                      c.POINTER(DisplayDevice), w.DWORD)
+enum_mode = api(user, "EnumDisplaySettingsExW", w.BOOL, w.LPCWSTR, w.DWORD,
+                c.POINTER(DisplayMode), w.DWORD)
+change_mode = api(user, "ChangeDisplaySettingsExW", w.LONG, w.LPCWSTR,
+                  c.POINTER(DisplayMode), w.HWND, w.DWORD, ptr)
 get_cursor = api(user, "GetCursorInfo", w.BOOL, c.POINTER(CursorInfo))
 get_dc = api(user, "GetDC", dc, w.HWND)
 release_dc = api(user, "ReleaseDC", c.c_int, w.HWND, dc)
@@ -52,6 +74,8 @@ stretch_mode = api(gdi, "SetStretchBltMode", c.c_int, dc, c.c_int)
 brush_origin = api(gdi, "SetBrushOrgEx", w.BOOL, dc, c.c_int, c.c_int, ptr)
 stretch = api(gdi, "StretchBlt", w.BOOL, dc, c.c_int, c.c_int, c.c_int, c.c_int,
               dc, c.c_int, c.c_int, c.c_int, c.c_int, w.DWORD)
+copy = api(gdi, "BitBlt", w.BOOL, dc, c.c_int, c.c_int, c.c_int, c.c_int,
+           dc, c.c_int, c.c_int, w.DWORD)
 
 
 def dpi_awareness():
@@ -72,6 +96,10 @@ class Monitor(NamedTuple):
     width: int
     height: int
     primary: bool
+
+    @property
+    def virtual(self):
+        return "virtual" in self.label.lower()
 
 
 def monitors():
@@ -104,6 +132,33 @@ def monitors():
     if not enum_monitors(None, None, visit, 0):
         raise c.WinError(c.get_last_error())
     return sorted(found, key=lambda item: (not item.primary, item.device))
+
+
+def match_size(monitor):
+    if monitor.primary or not monitor.virtual:
+        raise OSError("Select a secondary virtual display to match the FixFinder size.")
+    if (monitor.width, monitor.height) == (WIDTH, HEIGHT):
+        return WIDTH, HEIGHT
+    supported = []
+    index = 0
+    sizes = [(WIDTH, HEIGHT), (2 * WIDTH, 2 * HEIGHT)]
+    while True:
+        mode = DisplayMode(size=c.sizeof(DisplayMode))
+        if not enum_mode(monitor.device, index, c.byref(mode), 0):
+            break
+        if (mode.width, mode.height) in sizes and mode.bits == 32:
+            supported.append(mode)
+        index += 1
+    for mode in sorted(supported, key=lambda item: (item.width, abs(item.frequency - 60))):
+        # Keep the virtual monitor in its existing place in the extended desktop.
+        mode.fields = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
+        if (change_mode(monitor.device, c.byref(mode), None, CDS_TEST, None) == 0 and
+                change_mode(monitor.device, c.byref(mode), None, 0, None) == 0):
+            current = DisplayMode(size=c.sizeof(DisplayMode))
+            if (enum_mode(monitor.device, ENUM_CURRENT_SETTINGS, c.byref(current), 0) and
+                    (current.width, current.height) == (mode.width, mode.height)):
+                return current.width, current.height
+    raise OSError("Add 320 × 240 and 640 × 480 to the virtual display driver, then refresh.")
 
 
 class Capture:
@@ -147,9 +202,14 @@ class Capture:
         ratio = min(WIDTH / monitor.width, HEIGHT / monitor.height)
         width, height = max(1, round(monitor.width * ratio)), max(1, round(monitor.height * ratio))
         x, y = (WIDTH - width) // 2, (HEIGHT - height) // 2
-        c.memset(self.bits, 0, WIDTH * HEIGHT * 2)
-        if not stretch(self.memory, x, y, width, height, self.screen, monitor.left, monitor.top,
-                       monitor.width, monitor.height, 0x40cc0020):
+        if (monitor.width, monitor.height) == (WIDTH, HEIGHT):
+            ok = copy(self.memory, 0, 0, WIDTH, HEIGHT, self.screen, monitor.left, monitor.top, 0x40cc0020)
+        else:
+            if (width, height) != (WIDTH, HEIGHT):
+                c.memset(self.bits, 0, WIDTH * HEIGHT * 2)
+            ok = stretch(self.memory, x, y, width, height, self.screen, monitor.left, monitor.top,
+                         monitor.width, monitor.height, 0x40cc0020)
+        if not ok:
             raise c.WinError(c.get_last_error())
         gdi.GdiFlush()
         if self.cursor:

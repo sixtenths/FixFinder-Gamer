@@ -55,7 +55,7 @@ OF SUCH DAMAGE.
 #define CUSTOMHID_IN_PACKET          VIDEO_REPORT_SIZE
 #ifdef FIXFINDER_USB_DESKTOP
 #include "../firmware/doom-swd/usb_desktop.h"
-#define DESC_LEN_REPORT              43U
+#define DESC_LEN_REPORT              52U
 #undef CUSTOMHID_OUT_PACKET
 #define CUSTOMHID_OUT_PACKET         DESKTOP_REPORT_SIZE
 #define USBD_PID                     0x028EU
@@ -86,7 +86,11 @@ __ALIGN_BEGIN const usb_desc_dev custom_hid_dev_desc __ALIGN_END = {
     .bMaxPacketSize0       = USB_FS_EP0_MAX_LEN,
     .idVendor              = USBD_VID,
     .idProduct             = USBD_PID,
+#ifdef FIXFINDER_USB_DESKTOP
+    .bcdDevice             = 0x0101U,
+#else
     .bcdDevice             = 0x0100U,
+#endif
     .iManufacturer         = STR_IDX_MFC,
     .iProduct              = STR_IDX_PRODUCT,
     .iSerialNumber         = STR_IDX_SERIAL,
@@ -249,6 +253,8 @@ __ALIGN_BEGIN const uint8_t customhid_report_descriptor[DESC_LEN_REPORT] __ALIGN
 #ifdef FIXFINDER_USB_DESKTOP
     0x85, DESKTOP_REPORT_ID, 0x95, DESKTOP_REPORT_SIZE - 1,
     0x09, 0x04, 0x91, 0x02, 0x09, 0x05, 0x81, 0x02,
+    0x85, DESKTOP_BATCH_ID, 0x96, (DESKTOP_BATCH_SIZE - 1) & 255, (DESKTOP_BATCH_SIZE - 1) >> 8,
+    0x09, 0x06, 0xb1, 0x02,
 #endif
     0xc0
 #else
@@ -325,6 +331,9 @@ static uint8_t custom_hid_req_handler(usb_dev *udev, usb_req *req);
 
 static uint8_t custom_hid_data_in(usb_dev *udev, uint8_t ep_num);
 static uint8_t custom_hid_data_out(usb_dev *udev, uint8_t ep_num);
+#ifdef FIXFINDER_USB_DESKTOP
+static uint8_t custom_hid_control_out(usb_dev *udev);
+#endif
 
 usb_class_core usbd_custom_hid_cb = {
     .command   = NO_CMD,
@@ -334,6 +343,9 @@ usb_class_core usbd_custom_hid_cb = {
     .deinit    = custom_hid_deinit,
 
     .req_proc  = custom_hid_req_handler,
+#ifdef FIXFINDER_USB_DESKTOP
+    .ctlx_out  = custom_hid_control_out,
+#endif
 
     .data_in   = custom_hid_data_in,
     .data_out  = custom_hid_data_out
@@ -471,6 +483,17 @@ static uint8_t custom_hid_req_handler(usb_dev *udev, usb_req *req)
         break;
 
     case SET_REPORT:
+#ifdef FIXFINDER_USB_DESKTOP
+        if (req->wValue == (0x0300U | DESKTOP_BATCH_ID)) {
+            if (req->bmRequestType != 0x21U || req->wLength != DESKTOP_BATCH_SIZE)
+                return USBD_FAIL;
+            uint8_t *buffer = desktop_usb_batch_buffer();
+            if (!buffer) return USBD_FAIL;
+            udev->dev.transc_out[0].xfer_buf = buffer;
+            udev->dev.transc_out[0].remain_len = DESKTOP_BATCH_SIZE;
+            break;
+        }
+#endif
         hid->reportID = (uint8_t)(req->wValue);
         break;
 
@@ -495,6 +518,18 @@ static uint8_t custom_hid_req_handler(usb_dev *udev, usb_req *req)
 
     return USBD_OK;
 }
+
+#ifdef FIXFINDER_USB_DESKTOP
+static uint8_t custom_hid_control_out(usb_dev *udev)
+{
+    const usb_req *req = &udev->dev.control.req;
+    if (req->bmRequestType == 0x21U && req->bRequest == SET_REPORT &&
+        req->wValue == (0x0300U | DESKTOP_BATCH_ID) && req->wLength == DESKTOP_BATCH_SIZE &&
+        udev->dev.transc_out[0].xfer_count == udev->dev.transc_out[0].max_len)
+        desktop_usb_batch_received();
+    return USBD_OK;
+}
+#endif
 
 /*!
     \brief      handle custom HID data

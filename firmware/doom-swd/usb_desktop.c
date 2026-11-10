@@ -5,15 +5,15 @@
 #include "custom_hid_core.h"
 #include <string.h>
 
-enum { START = 1, TILE, DATA, STOP, PING };
-enum { RAW, RUNS, INDEXED };
+enum { START = 1, TILE, DATA, STOP, PING, BATCH };
+enum { RAW, RUNS, INDEXED, MONO, FOUR_COLORS };
 enum { TILE_W = 40, TILE_H = 20, PIXELS = TILE_W * TILE_H,
        COLUMNS = DOOM_LCD_WIDTH / TILE_W, ROWS = DOOM_LCD_HEIGHT / TILE_H };
 
 extern usb_core_driver custom_hid;
 static uint16_t pixels[PIXELS] __attribute__((section(".doom_video")));
 static uint8_t reply[DESKTOP_REPORT_SIZE] __attribute__((aligned(4)));
-static volatile bool running, reply_pending, tile_ready;
+static volatile bool running, reply_pending, tile_ready, batch_ready, batch_receiving;
 static volatile uint8_t request;
 static uint8_t tile, encoding;
 static uint16_t expected, received, sequence;
@@ -31,7 +31,7 @@ bool desktop_usb_active(void)
 
 void desktop_usb_reset(void)
 {
-    running = reply_pending = tile_ready = false;
+    running = reply_pending = tile_ready = batch_ready = batch_receiving = false;
     request = 0;
 }
 
@@ -51,6 +51,8 @@ void desktop_usb_receive(const uint8_t *packet)
 
     if (op == STOP || op == PING) {
         request = op;
+    } else if (batch_receiving || batch_ready) {
+        return;
     } else if (op == TILE && !tile_ready) {
         sequence = le16(packet + 2);
         tile = packet[4];
@@ -73,33 +75,49 @@ void desktop_usb_receive(const uint8_t *packet)
     }
 }
 
-static bool decode_tile(void)
+uint8_t *desktop_usb_batch_buffer(void)
 {
-    const uint8_t *data = doom_usb_video_scratch();
-    if (invalid) return false;
-    if (encoding == RAW) {
-        if (expected != sizeof pixels) return false;
+    if (!running || tile_ready || batch_ready || expected) return NULL;
+    batch_receiving = true;
+    return doom_usb_video_scratch();
+}
+
+void desktop_usb_batch_received(void)
+{
+    batch_ready = running && batch_receiving;
+    batch_receiving = false;
+}
+
+static bool decode_tile(const uint8_t *data, unsigned int size, unsigned int format)
+{
+    if (!size) return false;
+    if (format == RAW) {
+        if (size != sizeof pixels) return false;
         memcpy(pixels, data, sizeof pixels);
-    } else if (encoding == RUNS) {
-        if (expected % 3) return false;
+    } else if (format == RUNS) {
+        if (size % 3) return false;
         unsigned int out = 0;
-        for (unsigned int i = 0; i < expected; i += 3) {
+        for (unsigned int i = 0; i < size; i += 3) {
             unsigned int length = data[i];
             uint16_t color = le16(data + i + 1);
             if (!length || length > PIXELS - out) return false;
             while (length--) pixels[out++] = color;
         }
         if (out != PIXELS) return false;
-    } else {
+    } else if (format <= FOUR_COLORS) {
+        unsigned int bits = format == INDEXED ? 4 : format == MONO ? 1 : 2;
+        unsigned int mask = (1U << bits) - 1U;
         unsigned int count = data[0];
-        if (!count || count > 16 || expected != 1 + 2 * count + PIXELS / 2) return false;
+        if (!count || count > mask + 1U || size != 1 + 2 * count + PIXELS * bits / 8)
+            return false;
         const uint8_t *indices = data + 1 + 2 * count;
         for (unsigned int i = 0; i < PIXELS; ++i) {
-            unsigned int color = (indices[i / 2] >> ((i % 2) * 4)) & 15;
+            unsigned int bit = i * bits;
+            unsigned int color = (indices[bit / 8] >> (bit % 8)) & mask;
             if (color >= count) return false;
             pixels[i] = le16(data + 1 + 2 * color);
         }
-    }
+    } else return false;
     return true;
 }
 
@@ -107,6 +125,26 @@ static void draw_tile(unsigned int index)
 {
     doom_dcs_write_rgb_rect(index % COLUMNS * TILE_W, index / COLUMNS * TILE_H,
                             TILE_W, TILE_H, pixels);
+}
+
+static bool draw_batch(const uint8_t *data)
+{
+    /* Report ID, sequence and used length, followed by tile records and padding. */
+    unsigned int end = le16(data + 3);
+    if (data[0] != DESKTOP_BATCH_ID || end <= 5 || end > DESKTOP_BATCH_SIZE)
+        return false;
+    for (unsigned int offset = 5; offset < end;) {
+        if (end - offset < 4) return false;
+        unsigned int index = data[offset], format = data[offset + 1];
+        unsigned int size = le16(data + offset + 2);
+        offset += 4;
+        if (index >= COLUMNS * ROWS || size > end - offset ||
+            !decode_tile(data + offset, size, format))
+            return false;
+        draw_tile(index);
+        offset += size;
+    }
+    return true;
 }
 
 /* Call with interrupts masked after checking that the IN pipe is idle. */
@@ -117,6 +155,7 @@ static void acknowledge(uint8_t op, uint8_t status, uint16_t token)
     reply[2] = status;
     reply[3] = token;
     reply[4] = token >> 8;
+    reply[5] = op == START ? 1 : 0;  /* Feature-report batching capability. */
     reply_pending = true;
     custom_hid_report_send(&custom_hid, reply, sizeof reply);
 }
@@ -149,8 +188,19 @@ bool fixfinder_desktop_run(const volatile uint32_t *clock)
         if (!back) back_released = true;
         if ((back && back_released) || now - last_activity >= 5000U) break;
 
-        if (!reply_pending && tile_ready) {
-            bool valid = decode_tile();
+        if (!reply_pending && batch_ready) {
+            const uint8_t *data = doom_usb_video_scratch();
+            uint16_t token = le16(data + 1);
+            bool valid = draw_batch(data);
+            __disable_irq();
+            if (running) {
+                batch_ready = false;
+                acknowledge(BATCH, valid ? 0 : 1, token);
+            }
+            __set_PRIMASK(irq);
+            last_activity = now;
+        } else if (!reply_pending && tile_ready) {
+            bool valid = !invalid && decode_tile(doom_usb_video_scratch(), expected, encoding);
             if (valid) draw_tile(tile);
             __disable_irq();
             if (running) {
@@ -175,7 +225,7 @@ bool fixfinder_desktop_run(const volatile uint32_t *clock)
         }
     }
     __disable_irq();
-    running = tile_ready = false;
+    running = tile_ready = batch_ready = batch_receiving = false;
     request = 0;
     expected = 0;
     __set_PRIMASK(irq);

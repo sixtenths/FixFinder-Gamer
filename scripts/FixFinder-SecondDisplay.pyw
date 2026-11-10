@@ -10,11 +10,12 @@ import time
 import webbrowser
 
 import fixfinder_hid_windows as hid
-from fixfinder_desktop_windows import Capture, HEIGHT, WIDTH, dpi_awareness, monitors
+from fixfinder_desktop_windows import Capture, HEIGHT, WIDTH, dpi_awareness, match_size, monitors
 from fixfinder_image import DESKTOP_PID, VID
 
 REPORT_ID, REPORT_SIZE = 0x17, 64
-START, TILE, DATA, STOP, PING = range(1, 6)
+START, TILE, DATA, STOP, PING, BATCH = range(1, 7)
+BATCH_ID, BATCH_SIZE = 0x18, 4096
 TILE_W, TILE_H = 40, 20
 TILE_COLS, TILE_ROWS = WIDTH // TILE_W, HEIGHT // TILE_H
 DRIVER_URL = "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases"
@@ -27,7 +28,7 @@ def tiles(frame):
                            for y in range(top, top + TILE_H))
 
 
-def encode(raw):
+def encode(raw, compact=False):
     pixels = struct.unpack("<800H", raw)
     runs = bytearray()
     for color, group in groupby(pixels):
@@ -36,15 +37,25 @@ def encode(raw):
             runs.extend(struct.pack("<BH", 255, color))
             count -= 255
         runs.extend(struct.pack("<BH", count, color))
+        if len(runs) >= len(raw):
+            break
+    kind, payload = (1, runs) if len(runs) < len(raw) else (0, raw)
 
     palette = list(dict.fromkeys(pixels))
-    choices = [(0, raw), (1, runs)]
     if len(palette) <= 16:
-        by_color = {color: index for index, color in enumerate(palette)}
-        indices = [by_color[pixel] for pixel in pixels]
-        packed = bytes(a | b << 4 for a, b in zip(indices[::2], indices[1::2]))
-        choices.append((2, struct.pack(f"<B{len(palette)}H", len(palette), *palette) + packed))
-    return min(choices, key=lambda item: len(item[1]))
+        indexed, bits = 2, 4
+        if compact and len(palette) <= 2:
+            indexed, bits = 3, 1
+        elif compact and len(palette) <= 4:
+            indexed, bits = 4, 2
+        if 1 + 2 * len(palette) + len(pixels) * bits // 8 < len(payload):
+            by_color = {color: index for index, color in enumerate(palette)}
+            indices = [by_color[pixel] for pixel in pixels]
+            per_byte = 8 // bits
+            groups = zip(*(indices[i::per_byte] for i in range(per_byte)))
+            packed = bytes(sum(index << (i * bits) for i, index in enumerate(group)) for group in groups)
+            return indexed, struct.pack(f"<B{len(palette)}H", len(palette), *palette) + packed
+    return kind, payload
 
 
 class DisplayLink:
@@ -57,6 +68,7 @@ class DisplayLink:
         self.device = hid.Device(path, output_size=REPORT_SIZE)
         self.token = 0
         self.started = False
+        self.batched = False
 
     def send(self, operation, payload=b""):
         if self.device.write(bytes((REPORT_ID, operation)) + payload) != REPORT_SIZE:
@@ -72,17 +84,18 @@ class DisplayLink:
             if struct.unpack_from("<H", reply, 3)[0] != token:
                 continue
             if reply[2]:
-                raise OSError("The FixFinder rejected a desktop tile.")
-            return
+                raise OSError("The FixFinder rejected a desktop update.")
+            return reply
         raise TimeoutError("The FixFinder did not acknowledge the desktop update.")
 
     def start(self):
         self.send(START, b"\x01")
         try:
-            self.receive(START, 1)
+            reply = self.receive(START, 1)
         except TimeoutError as error:
             raise TimeoutError("Open the game selector on the FixFinder and close the USB viewer, then retry.") from error
         self.started = True
+        self.batched = reply[5] == 1
 
     def tile(self, index, raw):
         encoding, payload = encode(raw)
@@ -92,6 +105,34 @@ class DisplayLink:
             part = payload[offset:offset + REPORT_SIZE - 7]
             self.send(DATA, struct.pack("<HHB", self.token, offset, len(part)) + part)
         self.receive(TILE, self.token)
+
+    def update(self, changes, stop):
+        if not self.batched:
+            for index, raw in changes:
+                if stop.is_set():
+                    return False
+                self.tile(index, raw)
+            return True
+
+        batch = bytearray(5)
+        for index, raw in changes:
+            if stop.is_set():
+                return False
+            encoding, payload = encode(raw, compact=True)
+            if len(batch) + 4 + len(payload) > BATCH_SIZE:
+                self.send_batch(batch)
+                batch = bytearray(5)
+            batch.extend(struct.pack("<BBH", index, encoding, len(payload)))
+            batch.extend(payload)
+        if len(batch) > 5 and not stop.is_set():
+            self.send_batch(batch)
+        return not stop.is_set()
+
+    def send_batch(self, batch):
+        self.token = (self.token + 1) & 0xffff
+        struct.pack_into("<BHH", batch, 0, BATCH_ID, self.token, len(batch))
+        self.device.write_feature(bytes(batch).ljust(BATCH_SIZE, b"\0"))
+        self.receive(BATCH, self.token)
 
     def ping(self):
         self.send(PING)
@@ -118,26 +159,30 @@ def stream(source, cursor, serial, stop, notify):
         try:
             previous = [None] * (TILE_COLS * TILE_ROWS)
             last_transfer = last_check = time.monotonic()
-            changed = 0
+            updated = 0
             while not stop.is_set():
                 now = time.monotonic()
                 if now - last_check >= 1:
                     if source not in monitors():
                         raise OSError("The source display changed. Refresh the list and select it again.")
-                    notify(f"Connected to {link.serial}  |  {changed} tiles updated")
+                    rate = updated / (now - last_check)
+                    size = ("Native 320 × 240" if (source.width, source.height) == (WIDTH, HEIGHT)
+                            else f"{source.width} × {source.height} → {WIDTH} × {HEIGHT}")
+                    notify(f"{size}  |  {rate:.1f} FPS updated" if updated else f"{size}  |  No changes")
+                    updated = 0
                     last_check = now
-                for index, raw in enumerate(tiles(capture.frame())):
-                    if stop.is_set():
+                frame = list(tiles(capture.frame()))
+                changes = [(i, raw) for i, raw in enumerate(frame) if raw != previous[i]]
+                if changes:
+                    if not link.update(changes, stop):
                         break
-                    if raw != previous[index]:
-                        link.tile(index, raw)
-                        previous[index] = raw
-                        changed += 1
-                        last_transfer = time.monotonic()
+                    previous = frame
+                    updated += 1
+                    last_transfer = time.monotonic()
                 if time.monotonic() - last_transfer >= .75:
                     link.ping()
                     last_transfer = time.monotonic()
-                stop.wait(.05)
+                stop.wait(max(0, 1 / 60 - (time.monotonic() - now)))
         finally:
             capture.close()
     finally:
@@ -198,10 +243,22 @@ def show_app(serial):
                 preferred = next((i for i, item in enumerate(source_list) if item.device == prior), None)
                 if preferred is None:
                     preferred = next((i for i, item in enumerate(source_list)
-                                      if "virtual" in item.label.lower()), 0)
+                                      if item.virtual and not item.primary), 0)
                 picker.current(preferred)
             else:
                 picker.set("")
+        except OSError as error:
+            status.set(str(error))
+
+    def set_native():
+        if picker.current() < 0:
+            status.set("Select a secondary virtual display first.")
+            return
+        try:
+            width, height = match_size(source_list[picker.current()])
+            refresh()
+            status.set("Native 320 × 240 mode ready." if (width, height) == (WIDTH, HEIGHT)
+                       else "640 × 480 mode ready. The scanner uses exact 2:1 scaling.")
         except OSError as error:
             status.set(str(error))
 
@@ -215,6 +272,7 @@ def show_app(serial):
         picker.configure(state="disabled")
         connect_button.configure(state="disabled")
         refresh_button.configure(state="disabled")
+        native_button.configure(state="disabled")
         stop_button.configure(state="normal")
         status.set("Connecting to the FixFinder…")
 
@@ -255,6 +313,7 @@ def show_app(serial):
                     picker.configure(state="readonly")
                     connect_button.configure(state="normal")
                     refresh_button.configure(state="normal")
+                    native_button.configure(state="normal")
                     stop_button.configure(state="disabled")
         except Empty:
             pass
@@ -268,8 +327,10 @@ def show_app(serial):
     refresh_button.pack(side="left", padx=(7, 0))
     setup = ttk.Frame(panel, style="Panel.TFrame")
     setup.grid(sticky="w", pady=(11, 0))
+    native_button = ttk.Button(setup, text="Match FixFinder size", command=set_native)
+    native_button.pack(side="left")
     ttk.Button(setup, text="Windows display settings",
-               command=lambda: os.startfile("ms-settings:display")).pack(side="left")
+               command=lambda: os.startfile("ms-settings:display")).pack(side="left", padx=(7, 0))
     ttk.Button(setup, text="Virtual monitor driver",
                command=lambda: webbrowser.open(DRIVER_URL)).pack(side="left", padx=(7, 0))
     refresh()

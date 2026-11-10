@@ -35,6 +35,7 @@ wait = api(kernel, "WaitForSingleObject", w.DWORD, w.HANDLE, w.DWORD)
 cancel_io = api(kernel, "CancelIoEx", w.BOOL, w.HANDLE, poverlapped)
 io_result = api(kernel, "GetOverlappedResult", w.BOOL, w.HANDLE, poverlapped, pdword, w.BOOL)
 get_serial = api(hid, "HidD_GetSerialNumberString", w.BYTE, w.HANDLE, pointer, w.ULONG)
+set_feature = api(hid, "HidD_SetFeature", w.BYTE, w.HANDLE, pointer, w.ULONG)
 set_input_buffers = api(hid, "HidD_SetNumInputBuffers", w.BYTE, w.HANDLE, w.ULONG)
 get_guid = api(hid, "HidD_GetHidGuid", None, pointer)
 list_size = api(cfg, "CM_Get_Device_Interface_List_SizeW", w.DWORD, pdword,
@@ -128,3 +129,7 @@ class Device:
         buffer = c.create_string_buffer(length)
         count = self.transfer(read_file, buffer, timeout)
         return buffer.raw[:count]
+
+    def write_feature(self, data):
+        if not set_feature(self.handle, c.create_string_buffer(data, len(data)), len(data)):
+            raise c.WinError(c.get_last_error())

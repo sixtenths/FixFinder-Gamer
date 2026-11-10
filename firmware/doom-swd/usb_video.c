@@ -1,6 +1,9 @@
 #include "usb_video.h"
 #include "custom_hid_core.h"
 #include "display.h"
+#ifdef FIXFINDER_USB_DESKTOP
+#include "usb_desktop.h"
+#endif
 #include <string.h>
 
 #define VIDEO_WIDTH (DOOM_FRAME_WIDTH / 2)
@@ -12,6 +15,10 @@
 #define BAND_ROWS (DOOM_FRAME_HEIGHT / VIDEO_BANDS)
 #define LCD_BAND_ROWS (DOOM_LCD_HEIGHT / VIDEO_LCD_BANDS)
 #define PACKED_CAPACITY 4096U
+
+#ifdef FIXFINDER_USB_DESKTOP
+_Static_assert(HALF_SIZE >= DESKTOP_BATCH_SIZE, "desktop batch must fit video scratch");
+#endif
 
 _Static_assert(DOOM_LCD_WIDTH * LCD_BAND_ROWS == HALF_SIZE * 2U && !(LCD_BAND_ROWS % 2),
                "LCD band must fill both snapshot buffers");
