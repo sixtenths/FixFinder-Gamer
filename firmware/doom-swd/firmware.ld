@@ -2,7 +2,8 @@ ENTRY(Reset_Handler)
 
 MEMORY {
     FLASH (rx) : ORIGIN = DEFINED(__fixfinder_app_base) ? __fixfinder_app_base : 0x08000000,
-                 LENGTH = (DEFINED(__fixfinder_map_slot) ? __fixfinder_map_slot : 0x08300000) - ORIGIN(FLASH)
+                 LENGTH = (DEFINED(__fixfinder_app_limit) ? __fixfinder_app_limit :
+                           DEFINED(__fixfinder_map_slot) ? __fixfinder_map_slot : 0x08300000) - ORIGIN(FLASH)
     RAM (rwx)  : ORIGIN = 0x20000000, LENGTH = 192K
     TCM (rw)   : ORIGIN = 0x10000000, LENGTH = 64K
 }
@@ -50,3 +51,5 @@ SECTIONS {
 ASSERT((_sidata & 3) == 0, "Startup requires aligned data")
 ASSERT(_ebss + (DEFINED(__fixfinder_minimum_heap) ? __fixfinder_minimum_heap : 148K) <= __heap_end,
        "Insufficient room for the requested heap")
+ASSERT(!DEFINED(__fixfinder_switch_app) || __doom_line_scratch_end <= 0x1000fff8,
+       "TCM sections overlap the game switch request")

@@ -6,10 +6,12 @@ param(
     [switch]$Episode,
     [string[]]$PacmanRom,
     [switch]$PacmanFromEmmc,
-    [switch]$SaveFiles
+    [switch]$SaveFiles,
+    [switch]$SwitchApp
 )
 
 $ErrorActionPreference = 'Stop'
+if ($SwitchApp -and !$Episode) { throw '-SwitchApp requires the eMMC episode build.' }
 $root = Split-Path -Parent $PSScriptRoot
 $revision = '25deefdb44427e068735d3ef2af1e9a44d5cac85'
 $toolchain = (Resolve-Path -LiteralPath $ToolchainBin).Path
@@ -60,6 +62,7 @@ $options = @{
     UsbGame = $true
     Arcade = $true
     SaveFiles = $SaveFiles
+    SwitchApp = $SwitchApp
 }
 if ($Episode) {
     $compacted = Join-Path $work 'episode-compacted.wad'

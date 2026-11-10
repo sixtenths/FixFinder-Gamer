@@ -15,7 +15,19 @@ $sonic = ./scripts/Build-FixFinderSonic.ps1 -Rom 'C:\path\to\sonic.bin'
 python scripts/Install-UsbGame.py --wait 45 $sonic
 ```
 
-Sonic uses the same application slot as the arcade, so the scanner boots straight into Sonic after you install it. To restore the game selector, pass your arcade image to the same USB installer. Use your locally built episode image if you want DOOM and Pac-Man in the selector. Arcade saves and the game data stay on eMMC. [Arcade and episode installation](SETUP.md#build-and-install-the-complete-shareware-episode)
+The command above installs standalone Sonic. For a **Sonic entry in the HackerZone selector**, set up the local switcher once. It keeps both games on eMMC and stages the selected application into internal flash. The existing USB loader, arcade saves and DOOM map pack stay in place.
+
+```powershell
+$serial = 'YOUR_SCANNER_SERIAL'
+$arcade, $mapPack = ./scripts/Build-FixFinderDoom.ps1 -Episode -PacmanFromEmmc -SaveFiles -SwitchApp
+$sonic = ./scripts/Build-FixFinderSonic.ps1 -Rom 'C:\path\to\sonic.bin' -SwitchApp
+$switch = ./scripts/Build-FixFinderGameSwitch.ps1 -Arcade $arcade -Sonic $sonic
+python -B scripts/Install-GameSwitch.py --serial $serial $switch
+```
+
+Close the USB viewer and Second Display app before provisioning. The installer is for the development scanner with the verified FAT32 write guard and matching DOOM and Pac-Man files. It provisions the two application files and verifies them before installing the switcher. The local switcher checks each image before staging it and preserves flash sectors whose contents already match. If a switch is interrupted, the next boot defaults to the arcade and can restore it from eMMC. [Arcade and episode installation](SETUP.md#build-and-install-the-complete-shareware-episode)
+
+From the selector, press **Erase** once from DOOM to reach Sonic, then **Enter** to start it. Hold **Down + Back** for one second in Sonic to return, or hold **Backspace** in the USB viewer. On the development scanner, switching took about 18 seconds to launch Sonic and 25 seconds to return to the arcade. The Sonic run starts fresh each time.
 
 | Action | Scanner | USB viewer |
 | --- | --- | --- |
@@ -23,6 +35,7 @@ Sonic uses the same application slot as the arcade, so the scanner boots straigh
 | Move left or right | Back or Enter | Left or Right |
 | Jump | Erase | Space |
 | Crouch | Down | Down |
+| Return to the arcade | Hold Down + Back | Hold Backspace |
 
 ## Super Mario 64 renderer
 

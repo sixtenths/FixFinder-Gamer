@@ -17,6 +17,7 @@ param(
     [switch]$EmmcLibrary,
     [switch]$SaveFiles,
     [switch]$PacmanFromEmmc,
+    [switch]$SwitchApp,
     [string]$ProvisionDoomMaps,
     [switch]$PassThru
 )
@@ -64,6 +65,9 @@ for ($i = 0; $i -lt $lumpCount; $i++) {
 }
 if ($externalMaps -and (!$EmmcLibrary -or $packedSetup -or $ProvisionDoomMaps)) {
     throw 'Split DOOM maps require -EmmcLibrary and a separate map provisioning build.'
+}
+if ($SwitchApp -and (!$Arcade -or !$externalMaps)) {
+    throw '-SwitchApp requires the arcade with split DOOM maps.'
 }
 
 function Invoke-Gcc([string[]]$Arguments) {
@@ -275,6 +279,12 @@ node->m_tnext = free_secnodes;
     $display = Join-Path $build 'display.o'
     if ($Arcade) {
         $platformFlags += '-DFIXFINDER_ARCADE', '-DFIXFINDER_USB_DESKTOP'
+        if ($SwitchApp) {
+            $platformFlags += '-DFIXFINDER_SWITCH_APP'
+            $switcher = Join-Path $build 'switch-selector.o'
+            Invoke-Gcc ($platformFlags + @('-c', 'firmware/switcher/selector.c', '-o', $switcher))
+            $boardObjects += $switcher
+        }
         $desktop = Join-Path $build 'usb-desktop.o'
         Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/usb_desktop.c', '-o', $desktop))
         $boardObjects += $desktop
@@ -390,7 +400,12 @@ doom_iwad_len:
         Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/usb_input.c', '-o', $input))
         $objects = @($objects | Where-Object { (Split-Path -Leaf $_) -ne 'part_22.o' })
         $objects += $gameHid, $video, $input
-        $layout += '-Wl,--defsym,__fixfinder_app_base=0x08008000'
+        if ($SwitchApp) {
+            $layout += '-Wl,--defsym,__fixfinder_app_base=0x08010200',
+                       '-Wl,--defsym,__fixfinder_switch_app=1'
+        } else {
+            $layout += '-Wl,--defsym,__fixfinder_app_base=0x08008000'
+        }
     }
 
     $name = if ($FixFinderLcd) { 'FixFinder-Doom-LCD' } elseif ($board) { 'FixFinder-Doom-Board' } else { 'FixFinder-Doom-SWD' }

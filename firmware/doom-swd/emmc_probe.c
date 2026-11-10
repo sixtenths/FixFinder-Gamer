@@ -113,6 +113,7 @@ void fixfinder_emmc_snapshot(uint8_t *dest)
 
 #ifdef FIXFINDER_EMMC_LIBRARY
 #include "storage/diskio.h"
+#include "gd32f4xx.h"
 #include <stdbool.h>
 static bool writes_enabled;
 
@@ -177,28 +178,51 @@ static int card_ready(void)
     return 0;
 }
 
+static bool write_block(DWORD sector, const BYTE *src)
+{
+    if (!card_ready()) return false;
+    /* The polled transmit FIFO must be serviced until the block leaves SDIO.
+     * Keep USB and display work out of this short data phase. */
+    uint32_t irq = __get_PRIMASK();
+    __disable_irq();
+    bool sent = cmd(24, sector, 1) && !(S(RESP) & 0xfdffa000u);
+    unsigned int words = 0, status = 0;
+    if (sent) {
+        S(DATA) = 0; S(CLEAR) = 0x7ff;
+        S(DTIME) = 2400000; S(LEN) = 512; S(DATA) = (9u << 4) | 1u;
+        for (unsigned int i = 0; i < 8000000u; ++i) {
+            status = S(STAT);
+            if (status & 0x21au) break;
+            if ((status & (1u << 14)) && words < 128) {
+                for (unsigned int n = 0; n < 8; ++n, ++words, src += 4)
+                    S(FIFO) = (uint32_t)src[0] | ((uint32_t)src[1] << 8) |
+                              ((uint32_t)src[2] << 16) | ((uint32_t)src[3] << 24);
+            }
+            if ((status & (1u << 8)) && words == 128) break;
+        }
+        S(DATA) = 0;
+    }
+    __set_PRIMASK(irq);
+    return sent && words == 128 && (status & (1u << 8)) && !(status & 0x21au) && card_ready();
+}
+
 DRESULT disk_write(BYTE drive,const BYTE *src,DWORD sector,UINT count)
 {
     if (disk_status(drive)) return RES_NOTRDY;
     if (!writes_enabled || !fixfinder_library_write_allowed()) return RES_WRPRT;
     if (!count || sector>=out.sectors || count>out.sectors-sector) return RES_PARERR;
     while (count--) {
-        if (!card_ready() || !cmd(24,sector++,1) || (S(RESP)&0xfdffa000u)) return RES_ERROR;
-        S(DATA)=0; S(CLEAR)=0x7ff;
-        S(DTIME)=2400000; S(LEN)=512; S(DATA)=(9u<<4)|1u;
-        unsigned int words=0, s=0;
-        for (unsigned int i=0;i<8000000u;++i) {
-            s=S(STAT);
-            if (s&0x21au) break;
-            if ((s&(1u<<14)) && words<128) {
-                for (unsigned int n=0;n<8;++n,++words,src+=4)
-                    S(FIFO)=(uint32_t)src[0]|((uint32_t)src[1]<<8)|
-                            ((uint32_t)src[2]<<16)|((uint32_t)src[3]<<24);
-            }
-            if ((s&(1u<<8)) && words==128) break;
+        uint32_t clock = S(CLK);
+        bool written = false;
+        for (unsigned int attempt = 0; attempt < 3 && !written; ++attempt) {
+            if (attempt) S(CLK) = (clock & ~255U) | ((16U << attempt) - 2U);
+            written = write_block(sector, src);
+            if (!written) delay(200000);
         }
-        S(DATA)=0;
-        if (words!=128 || !(s&(1u<<8)) || (s&0x21au) || !card_ready()) return RES_ERROR;
+        if (S(CLK) != clock) S(CLK) = clock;
+        if (!written) return RES_ERROR;
+        ++sector;
+        src += 512;
     }
     return RES_OK;
 }

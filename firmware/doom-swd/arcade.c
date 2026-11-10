@@ -13,6 +13,9 @@
 #ifdef FIXFINDER_USB_DESKTOP
 #include "usb_desktop.h"
 #endif
+#ifdef FIXFINDER_SWITCH_APP
+#include "../switcher/switcher.h"
+#endif
 #include "../lcd/fixfinder_io.h"
 #include "../usb-loader/screen_art.h"
 #ifndef FIXFINDER_ARCADE_ONLY
@@ -27,7 +30,11 @@ enum game_id {
 #ifndef FIXFINDER_ARCADE_ONLY
     DOOM,
 #endif
-    SNAKE, MAZE, PONG, BREAKOUT, RACER, DINO, GAME_COUNT
+    SNAKE, MAZE, PONG, BREAKOUT, RACER, DINO,
+#ifdef FIXFINDER_SWITCH_APP
+    SONIC,
+#endif
+    GAME_COUNT
 };
 enum { W = DOOM_FRAME_WIDTH, H = DOOM_FRAME_HEIGHT };
 
@@ -83,6 +90,9 @@ static const struct {
     [BREAKOUT] = {"BREAKOUT", "PADDLE", "BACK LEFT  ENTER RIGHT", PINK},
     [RACER] = {"NEON CIRCUIT", "RACING", "STEER  BOOST  BRAKE", ORANGE},
     [DINO] = {"DINO RUN", "RUNNER", "TAP A BUTTON TO JUMP", GREEN},
+#ifdef FIXFINDER_SWITCH_APP
+    [SONIC] = {"SONIC", "GENESIS", "HOLD DOWN + BACK FOR ARCADE", BLUE},
+#endif
 };
 
 static const int dx[] = {1, 0, -1, 0};
@@ -732,6 +742,18 @@ static void illustration(uint8_t *frame, int x, int y, enum game_id game)
         box(frame,x+57,y+25,4,13,YELLOW);
         box(frame,x+53,y+29,11,3,YELLOW);
         break;
+#ifdef FIXFINDER_SWITCH_APP
+    case SONIC:
+        box(frame,x+8,y+39,64,5,GREEN);
+        for (int row=-15; row<=15; ++row) {
+            int outer=16-abs(row)*abs(row)/16;
+            int inner=10-abs(row)*abs(row)/10;
+            box(frame,x+39-outer,y+21+row,2*outer+1,1,YELLOW);
+            if (inner>0) box(frame,x+39-inner,y+21+row,2*inner+1,1,INSET);
+        }
+        box(frame,x+22,y+15,2,4,WHITE);
+        break;
+#endif
     default: break;
     }
 }
@@ -863,6 +885,16 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                 splash(frame,clock,selected);
                 release_lcd_shadow();
                 switch (selected) {
+#ifdef FIXFINDER_SWITCH_APP
+                case SONIC:
+                    if (switch_package_available(SWITCH_SONIC))
+                        switch_reset(SWITCH_SONIC, BOOT_GAME);
+                    fixfinder_set_led(FIXFINDER_LED_RED);
+                    text(120, 125, "Sonic package missing", &ui_small, RED, PANEL, true);
+                    present(frame);
+                    wait_until(clock,*clock+1500);
+                    break;
+#endif
 #ifndef FIXFINDER_ARCADE_ONLY
                 case DOOM:
 #if defined(FIXFINDER_EXTERNAL_DOOM_MAPS) || defined(FIXFINDER_PROVISION_DOOM_MAPS)

@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory)]
     [string]$Rom,
     [string]$GwenesisSource,
+    [switch]$SwitchApp,
     [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin"
 )
 
@@ -31,8 +32,8 @@ $sources += Join-Path $root 'firmware/genesis/sonic.c'
 $includes = @('bus', 'cpus/M68K', 'cpus/Z80', 'io', 'sound', 'savestate', 'vdp') |
     ForEach-Object { Join-Path $staged $_ }
 $out = & "$PSScriptRoot/Build-UsbLoader.ps1" -ToolchainBin $ToolchainBin -GameSdk -GameSource $sources `
-    -GameInclude $includes -GameHeapKiB 0
+    -GameInclude $includes -GameHeapKiB 0 -SwitchApp:$SwitchApp
 $bin = Join-Path $out 'FixFinder-Game.bin'
-$target = Join-Path $out 'FixFinder-Sonic-USB.bin'
+$target = Join-Path $out $(if ($SwitchApp) { 'FixFinder-Sonic-Switch.bin' } else { 'FixFinder-Sonic-USB.bin' })
 Copy-Item -LiteralPath $bin -Destination $target
 Write-Output $target

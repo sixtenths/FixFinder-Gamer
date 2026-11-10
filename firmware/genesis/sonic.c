@@ -14,6 +14,23 @@
 #include "ym2612.h"
 #include "z80inst.h"
 #include <string.h>
+#ifdef FIXFINDER_SWITCH_APP
+#include "../switcher/switcher.h"
+
+static void check_arcade_return(uint32_t now)
+{
+    static uint32_t started;
+    static bool holding;
+    if (fixfinder_keys(now) != (KEY_DOWN | KEY_BACK)) {
+        holding = false;
+    } else if (!holding) {
+        holding = true;
+        started = now;
+    } else if (now - started >= 1000U) {
+        switch_reset(SWITCH_ARCADE, BOOT_GAME);
+    }
+}
+#endif
 
 enum { LCD_WIDTH = 320, LCD_HEIGHT = 240, BLACK = 192 };
 int system_clock, scan_line;
@@ -171,6 +188,9 @@ void fixfinder_game_main(void)
     uint32_t deadline = fixfinder_millis();
     for (;;) {
         uint32_t start = fixfinder_millis();
+#ifdef FIXFINDER_SWITCH_APP
+        check_arcade_return(start);
+#endif
         poll_pad();
         bool lcd = frame_count % 3 == 0;
         emulate_frame(lcd);

@@ -8,13 +8,19 @@ param(
     [switch]$GameSdk,
     [switch]$ArcadeOnly,
     [switch]$SaveFiles,
+    [switch]$SwitchApp,
+    [switch]$SwitchSeed,
+    [switch]$SwitchSupervisor,
     [ValidateSet('UART3', 'USART0')]
     [string]$RadioUart,
     [switch]$RamTest
 )
 
 $ErrorActionPreference = 'Stop'
-$buildGame = $GameSource -or $ArcadeOnly
+$buildGame = $GameSource -or $ArcadeOnly -or $SwitchSupervisor
+if (($SwitchApp -or $SwitchSeed) -and !$GameSdk) { throw 'Switch applications and seeds require -GameSdk.' }
+if ($SwitchSupervisor -and ($GameSource -or $ArcadeOnly)) { throw 'The switcher has its own sources.' }
+if ($SwitchApp -and $SwitchSeed) { throw 'A seed needs the standard USB application address.' }
 if ($ArcadeOnly -and ($GameSource -or $GameSdk)) { throw '-ArcadeOnly selects its own game sources.' }
 if ($SaveFiles -and !$ArcadeOnly) { throw '-SaveFiles requires -ArcadeOnly.' }
 if (($GameInclude -or $GameHeapKiB -ne 148) -and !$GameSource) {
@@ -64,7 +70,20 @@ try {
     $common = @(Get-ChildItem -LiteralPath $v8 -Filter 'part_*.o' |
         Where-Object Name -notin @('part_1.o', 'part_22.o') | ForEach-Object FullName)
 
-    if ($buildGame) {
+    if ($SwitchSupervisor) {
+        $defines = @('-DFIXFINDER_EMMC_LIBRARY', '-O2')
+        $objects = $common | Where-Object { (Split-Path -Leaf $_) -ne 'part_0.o' }
+        foreach ($unit in @('firmware/switcher/supervisor.c', 'firmware/usb-loader/screen.c',
+            'firmware/doom-swd/emmc_probe.c', 'firmware/doom-swd/storage/ff.c',
+            "$peripheral/Source/gd32f4xx_fmc.c")) {
+            $objects += Compile $unit ([IO.Path]::GetFileNameWithoutExtension($unit)) $defines
+        }
+        $layout = @('--specs=nano.specs', '--specs=nosys.specs',
+                    '-Wl,--defsym,__fixfinder_app_base=0x08008000',
+                    '-Wl,--defsym,__fixfinder_app_limit=0x08010000',
+                    '-Wl,--defsym,__fixfinder_switch_app=1')
+        Export-Image 'FixFinder-Switcher-USB' 'firmware/doom-swd/firmware.ld' $layout $objects
+    } elseif ($buildGame) {
         $defines = @('-DFIXFINDER_USB_GAME')
         if ($GameSdk -or $ArcadeOnly) {
             $defines += '-DFIXFINDER_USB_VIDEO', '-Ifirmware/game-sdk'
@@ -73,6 +92,8 @@ try {
         if ($SaveFiles) {
             $defines += '-DFIXFINDER_SAVE_FILES', '-DFIXFINDER_EMMC_LIBRARY', '-DFIXFINDER_STORAGE_PROBE'
         }
+        if ($SwitchApp) { $defines += '-DFIXFINDER_SWITCH_APP' }
+        if ($SwitchSeed) { $defines += '-DFIXFINDER_EMMC_LIBRARY', '-DFIXFINDER_STORAGE_PROBE' }
         $objects = $common + @(
             (Compile 'USB-Build-V8/app.c' 'game-entry' $defines),
             (Compile 'USB-Build-V8/custom_hid_core.c' 'game-hid' $defines))
@@ -88,6 +109,11 @@ try {
                 $objects += Compile "firmware/doom-swd/$unit.c" ([IO.Path]::GetFileName($unit)) $defines
             }
         }
+        if ($SwitchSeed) {
+            foreach ($unit in @('emmc_probe', 'storage/ff')) {
+                $objects += Compile "firmware/doom-swd/$unit.c" ([IO.Path]::GetFileName($unit)) $defines
+            }
+        }
         if ($ArcadeOnly) {
             $objects += Compile 'firmware/doom-swd/arcade.c' 'arcade' $defines
             $objects += Compile 'firmware/doom-swd/usb_desktop.c' 'usb-desktop' $defines
@@ -95,12 +121,18 @@ try {
                 $objects += Compile "firmware/doom-swd/$game.c" $game ($defines + '-O2')
             }
         }
-        $gameDefines = $defines + @($GameInclude | ForEach-Object { "-I$_" })
+        $gameDefines = $defines
+        if ($GameInclude) { $gameDefines += $GameInclude | ForEach-Object { "-I$_" } }
         for ($i = 0; $i -lt $GameSource.Count; ++$i) {
             $objects += Compile $GameSource[$i] "game-$i" $gameDefines
         }
-        $layout = @('-Wl,--defsym,__fixfinder_app_base=0x08008000')
+        $layout = @(if ($SwitchApp) {
+            @('-Wl,--defsym,__fixfinder_app_base=0x08010200',
+              '-Wl,--defsym,__fixfinder_app_limit=0x082c0000',
+              '-Wl,--defsym,__fixfinder_switch_app=1')
+        } else { '-Wl,--defsym,__fixfinder_app_base=0x08008000' })
         if ($GameInclude) { $layout += '--specs=nosys.specs' }
+        if ($SwitchSeed) { $layout += '--specs=nano.specs', '--specs=nosys.specs' }
         if ($GameHeapKiB -ne 148) {
             $layout += "-Wl,--defsym,__fixfinder_minimum_heap=$($GameHeapKiB * 1024)"
         }
