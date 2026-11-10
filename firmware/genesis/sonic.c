@@ -87,9 +87,9 @@ static void update_palette(void)
 
 static unsigned int preview_y;
 
-static void output_row(unsigned int y, const uint8_t *pixels, bool native, bool preview)
+static void output_row(unsigned int y, const uint8_t *pixels, bool lcd, bool native, bool preview)
 {
-    doom_dcs_write_native(y, pixels);
+    if (lcd) doom_dcs_stream_native_row(y, pixels);
     if (native) doom_usb_video_native_row(y, pixels);
     if (preview && preview_y < FIXFINDER_HEIGHT && preview_y * LCD_HEIGHT / FIXFINDER_HEIGHT == y) {
         uint8_t *dest = fixfinder_screen + preview_y++ * FIXFINDER_WIDTH;
@@ -98,7 +98,7 @@ static void output_row(unsigned int y, const uint8_t *pixels, bool native, bool 
     }
 }
 
-static void emulate_frame(bool draw)
+static void emulate_frame(bool lcd)
 {
     screen_height = REG1_240_LINE ? 240 : 224;
     screen_width = REG12_MODE_H40 ? 320 : 256;
@@ -107,27 +107,28 @@ static void emulate_frame(bool draw)
     system_clock = zclk = 0;
     ym2612_clock = ym2612_index = sn76489_clock = sn76489_index = 0;
     int hint = REG10_LINE_COUNTER;
-    bool capture = draw && doom_usb_video_native_requested();
-    bool preview = draw && doom_usb_video_preview_requested();
+    bool capture = doom_usb_video_native_requested();
+    bool preview = doom_usb_video_preview_requested();
+    bool output = lcd || capture || preview;
     preview_y = 0;
-    if (draw) {
+    if (output) {
         update_palette();
-        doom_dcs_begin_native();
+        if (lcd) doom_dcs_begin_native();
         if (capture) doom_usb_video_native_begin(palette);
         for (unsigned int y = 0; y < border; ++y) {
-            output_row(y, blank, capture, preview);
+            output_row(y, blank, lcd, capture, preview);
         }
     }
     for (scan_line = 0; scan_line < LINES_PER_FRAME_NTSC; ++scan_line) {
         int target = system_clock + VDP_CYCLES_PER_LINE;
         m68k_run(target);
         z80_run(target);
-        if (draw && scan_line < screen_height) {
-            memset(fixfinder_genesis_line, BLACK, sizeof fixfinder_genesis_line);
+        unsigned int y = border + scan_line;
+        if (scan_line < screen_height &&
+            (lcd || preview || (capture && doom_usb_video_native_wants_row(y)))) {
             gwenesis_vdp_render_line(scan_line);
             update_palette();
-            unsigned int y = border + scan_line;
-            output_row(y, fixfinder_genesis_line, capture, preview);
+            output_row(y, fixfinder_genesis_line, lcd, capture, preview);
         }
         if (scan_line == 0 || scan_line > screen_height) hint = REG10_LINE_COUNTER;
         if (--hint < 0) {
@@ -147,10 +148,11 @@ static void emulate_frame(bool draw)
         if (scan_line == screen_height) z80_irq_line(0);
         system_clock = target;
     }
-    if (draw) {
+    if (output) {
         for (unsigned int y = LCD_HEIGHT - border; y < LCD_HEIGHT; ++y) {
-            output_row(y, blank, capture, preview);
+            output_row(y, blank, lcd, capture, preview);
         }
+        if (lcd) doom_dcs_finish_native_stream();
         if (capture) doom_usb_video_native_end();
         if (preview) doom_usb_video_capture(fixfinder_screen, palette);
     }
@@ -170,11 +172,10 @@ void fixfinder_game_main(void)
     for (;;) {
         uint32_t start = fixfinder_millis();
         poll_pad();
-        bool draw = !(frame_count % 3) || doom_usb_video_native_requested() ||
-                    doom_usb_video_preview_requested();
-        emulate_frame(draw);
+        bool lcd = frame_count % 3 == 0;
+        emulate_frame(lcd);
         uint32_t work_ms = fixfinder_millis() - start;
-        if (draw) fixfinder_genesis_render_ms = work_ms;
+        if (lcd) fixfinder_genesis_render_ms = work_ms;
         else fixfinder_genesis_step_ms = work_ms;
         fixfinder_tone(fixfinder_genesis_psg_hz());
         fixfinder_genesis_frames = ++frame_count;

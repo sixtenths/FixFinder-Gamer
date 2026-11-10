@@ -4,6 +4,10 @@
 
 The FixFinder runs the original 512 KiB Genesis cartridge through a Cortex-M4 build of Gwenesis. The cartridge is word-swapped into read-only flash and the VDP sends indexed scanlines to the LCD. The USB viewer supports its native and preview modes. The beeper can reproduce one PSG tone at a time. FM output and emulator save states are outside the current build.
 
+The build packs the 68000 opcode tables into faster internal flash and skips complete iterations of recognized idle loops while preserving guest cycles. LCD transfers overlap emulation, and USB capture runs independently of the physical LCD refresh. Gameplay and LCD refresh have separate rates, with a physical update every third emulated frame.
+
+On the test scanner, the Green Hill Zone timer advanced 15 seconds in a 15-second wall-clock sample, both between captures and during continuous fast USB preview.
+
 Supply a raw Sonic the Hedgehog cartridge BIN. The hardware test used the REV01 image built by Sonic Retro's disassembly and verified against its reference hash. The build downloads the pinned Gwenesis source if needed and keeps all generated data under `build/`. [Sonic Retro disassembly](https://github.com/sonicretro/s1disasm) · [Gwenesis source and license](https://github.com/bzhxx/gwenesis/tree/168e46661a086a0b793a9ee127a206604ebe7df1)
 
 ```powershell

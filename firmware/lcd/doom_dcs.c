@@ -1,6 +1,7 @@
 #include "../doom-swd/display.h"
 #include "exmc_dcs.h"
 #include "drv_usb_hw.h"
+#include "gd32f4xx_dma.h"
 #include <string.h>
 
 static bool ordered_pixels;
@@ -115,4 +116,56 @@ void doom_dcs_begin_native_rows(unsigned int first)
 void doom_dcs_write_native(unsigned int row, const uint8_t *indices)
 {
     write_row(NULL, row, doom_display_native_row(indices));
+}
+
+/* This buffer is in DMA-accessible SRAM. Each halfword holds two successive
+ * byte writes to the panel's data register, high byte first. */
+static uint16_t dma_row[DOOM_LCD_WIDTH] __attribute__((aligned(4)));
+static bool dma_initialized, dma_pending, dma_failed;
+
+void doom_dcs_finish_native_stream(void)
+{
+    if (!dma_pending) return;
+    const uint32_t errors = DMA_INTF_FEEIF | DMA_INTF_SDEIF | DMA_INTF_TAEIF;
+    uint32_t flags;
+    unsigned int limit = 100000;
+    do {
+        flags = DMA_INTF0(DMA1);
+    } while (!(flags & (errors | DMA_INTF_FTFIF)) && --limit);
+
+    if ((flags & errors) || !limit) {
+        DMA_CH0CTL(DMA1) &= ~DMA_CHXCTL_CHEN;
+        while (DMA_CH0CTL(DMA1) & DMA_CHXCTL_CHEN) {}
+        dma_failed = true;
+    }
+    dma_pending = false;
+}
+
+void doom_dcs_stream_native_row(unsigned int row, const uint8_t *indices)
+{
+    bool was_pending = dma_pending;
+    doom_dcs_finish_native_stream();
+    if (dma_failed) {
+        if (was_pending) begin_panel_window(0, row, DOOM_LCD_WIDTH, DOOM_LCD_HEIGHT - row);
+        doom_dcs_write_native(row, indices);
+        return;
+    }
+    if (!dma_initialized) {
+        RCU_AHB1EN |= RCU_AHB1EN_DMA1EN;
+        (void)RCU_AHB1EN;
+        DMA_CH0CTL(DMA1) = DMA_MEMORY_TO_MEMORY | DMA_CHXCTL_PNAGA;
+        DMA_CH0FCTL(DMA1) = DMA_CHXFCTL_MDMEN;
+        DMA_CH0PADDR(DMA1) = (uintptr_t)dma_row;
+        DMA_CH0M0ADDR(DMA1) = (uintptr_t)&LCD_DATA;
+        dma_initialized = true;
+    }
+    const uint16_t *pixels = doom_display_native_row(indices);
+    for (unsigned int x = 0; x < DOOM_LCD_WIDTH; ++x)
+        dma_row[x] = (uint16_t)__REV16(pixels[x]);
+    DMA_INTC0(DMA1) = DMA_INTC_FEEIFC | DMA_INTC_SDEIFC | DMA_INTC_TAEIFC |
+                     DMA_INTC_HTFIFC | DMA_INTC_FTFIFC;
+    DMA_CH0CNT(DMA1) = sizeof dma_row;
+    __DMB();
+    DMA_CH0CTL(DMA1) |= DMA_CHXCTL_CHEN;
+    dma_pending = true;
 }

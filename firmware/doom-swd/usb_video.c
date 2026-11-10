@@ -267,12 +267,17 @@ void doom_usb_video_native_begin(const uint8_t *palette)
     native_capture = begin_capture(palette, true) != 0;
 }
 
+bool doom_usb_video_native_wants_row(unsigned int y)
+{
+    if (!native_capture) return false;
+    unsigned int first = first_lcd_row(requested_command);
+    return y >= first && y < first + LCD_BAND_ROWS;
+}
+
 void doom_usb_video_native_row(unsigned int y, const uint8_t *row)
 {
-    if (!native_capture) return;
-    unsigned int first = first_lcd_row(requested_command);
-    if (y >= first && y < first + LCD_BAND_ROWS)
-        memcpy(lcd_band_row(y - first), row, DOOM_LCD_WIDTH);
+    if (doom_usb_video_native_wants_row(y))
+        memcpy(lcd_band_row(y - first_lcd_row(requested_command)), row, DOOM_LCD_WIDTH);
 }
 
 void doom_usb_video_native_end(void)

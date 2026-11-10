@@ -18,6 +18,8 @@ const uint16_t *doom_display_native_pixels(const uint8_t *indices, unsigned int 
 void doom_dcs_begin_native(void);
 void doom_dcs_begin_native_rows(unsigned int first);
 void doom_dcs_write_native(unsigned int row, const uint8_t *indices);
+void doom_dcs_stream_native_row(unsigned int row, const uint8_t *indices);
+void doom_dcs_finish_native_stream(void);
 void doom_dcs_begin_native_span(unsigned int x, unsigned int width);
 void doom_dcs_write_native_span(unsigned int row, const uint8_t *indices,
                                 unsigned int x, unsigned int width);
