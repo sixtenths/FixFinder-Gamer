@@ -1,6 +1,7 @@
 """Send an active Windows display to the FixFinder over USB."""
 
 import argparse
+from io import BytesIO
 from itertools import groupby
 import os
 from queue import Empty, SimpleQueue
@@ -16,6 +17,7 @@ from fixfinder_image import DESKTOP_PID, VID
 REPORT_ID, REPORT_SIZE = 0x17, 64
 START, TILE, DATA, STOP, PING, BATCH = range(1, 7)
 BATCH_ID, BATCH_SIZE = 0x18, 4096
+JPEG_BATCH, JPEG_CAPACITY = 0x8000, 24 * 1024
 TILE_W, TILE_H = 40, 20
 TILE_COLS, TILE_ROWS = WIDTH // TILE_W, HEIGHT // TILE_H
 TILE_BYTES = 2 * TILE_W * TILE_H
@@ -110,6 +112,7 @@ class DisplayLink:
         self.started = False
         self.batched = False
         self.rectangles = False
+        self.jpeg = False
         self.compressor = None
 
     def send(self, operation, payload=b""):
@@ -139,6 +142,7 @@ class DisplayLink:
         self.started = True
         self.batched = reply[5] == 1
         self.rectangles = self.batched and reply[6] == 1
+        self.jpeg = self.batched and reply[7] == 1
         if self.rectangles:
             self.compressor = TileCompressor(TILE_BYTES)
 
@@ -190,14 +194,25 @@ class DisplayLink:
             self.send_batch(batch)
         return not stop.is_set()
 
-    def send_batch(self, batch):
+    def send_batch(self, batch, flags=0):
         self.token = (self.token + 1) & 0xffff
-        struct.pack_into("<BHH", batch, 0, BATCH_ID, self.token, len(batch))
-        if self.rectangles and len(batch) < REPORT_SIZE:
+        struct.pack_into("<BHH", batch, 0, BATCH_ID, self.token, len(batch) | flags)
+        if self.rectangles and not flags and len(batch) < REPORT_SIZE:
             self.send(BATCH, batch[1:])
         else:
             self.device.write_feature(bytes(batch).ljust(BATCH_SIZE, b"\0"))
         self.receive(BATCH, self.token)
+
+    def video_frame(self, jpeg, stop):
+        chunk_size = BATCH_SIZE - 9
+        for offset in range(0, len(jpeg), chunk_size):
+            if stop.is_set():
+                return False
+            batch = bytearray(9)
+            struct.pack_into("<HH", batch, 5, offset, len(jpeg))
+            batch.extend(jpeg[offset:offset + chunk_size])
+            self.send_batch(batch, JPEG_BATCH)
+        return True
 
     def ping(self):
         self.send(PING)
@@ -215,16 +230,41 @@ class DisplayLink:
             self.device.close()
 
 
-def stream(source, cursor, serial, stop, notify):
+class VideoEncoder:
+    def __init__(self):
+        try:
+            from PIL import Image
+        except ImportError as error:
+            raise OSError("Video mode needs Pillow. Install it with python -m pip install Pillow.") from error
+        self.image = Image
+
+    def __call__(self, frame):
+        image = self.image.frombytes("RGB", (WIDTH, HEIGHT), frame, "raw", "BGR;16")
+        image = image.resize((WIDTH // 2, HEIGHT // 2), self.image.Resampling.BOX)
+        for quality in (72, 55, 40, 25):
+            with BytesIO() as buffer:
+                image.save(buffer, "JPEG", quality=quality, subsampling=2)
+                data = buffer.getvalue()
+            if len(data) <= 2 * (BATCH_SIZE - 9):
+                break
+        return data if len(data) <= JPEG_CAPACITY else None
+
+
+def stream(source, cursor, serial, stop, notify, video=False):
     link = DisplayLink(serial)
     try:
         link.start()
+        if video and not link.jpeg:
+            raise OSError("Update the scanner's arcade firmware to use Video mode.")
+        encoder = VideoEncoder() if video else None
         notify(f"Connected to {link.serial}  |  Sending first frame…")
         capture = Capture(source, cursor=cursor)
         try:
             previous = [None] * (TILE_COLS * TILE_ROWS)
             last_transfer = last_check = time.monotonic()
             updated = 0
+            video_active = False
+            last_motion = 0.0
             while not stop.is_set():
                 now = time.monotonic()
                 if now - last_check >= 1:
@@ -236,13 +276,31 @@ def stream(source, cursor, serial, stop, notify):
                     notify(f"{size}  |  {rate:.1f} FPS updated" if updated else f"{size}  |  No changes")
                     updated = 0
                     last_check = now
-                frame = list(tiles(capture.frame()))
+                rgb = capture.frame()
+                frame = list(tiles(rgb))
                 changes = [(i, raw) for i, raw in enumerate(frame) if raw != previous[i]]
                 if changes:
-                    if not link.update(changes, stop, previous):
-                        break
+                    if len(changes) >= 24:
+                        last_motion = now
+                    jpeg = encoder(rgb) if encoder and now - last_motion < .3 else None
+                    if jpeg is not None:
+                        if not link.video_frame(jpeg, stop):
+                            break
+                        video_active = True
+                    else:
+                        if video_active:
+                            changes = list(enumerate(frame))
+                        if not link.update(changes, stop, None if video_active else previous):
+                            break
+                        video_active = False
                     previous = frame
                     updated += 1
+                    last_transfer = time.monotonic()
+                elif video_active and now - last_transfer >= .3:
+                    # Refresh every pixel after motion stops to restore lossless text.
+                    if not link.update(list(enumerate(frame)), stop):
+                        break
+                    video_active = False
                     last_transfer = time.monotonic()
                 if time.monotonic() - last_transfer >= .75:
                     link.ping()
@@ -257,7 +315,7 @@ def stream(source, cursor, serial, stop, notify):
         link.close()
 
 
-def show_app(serial, connect_virtual=False):
+def show_app(serial, connect_virtual=False, video=False):
     import tkinter as tk
     from tkinter import ttk
 
@@ -287,7 +345,11 @@ def show_app(serial, connect_virtual=False):
     picker.grid(sticky="ew", pady=(4, 9))
     cursor = tk.BooleanVar(value=True)
     ttk.Checkbutton(panel, text="Show mouse pointer", variable=cursor,
-                    style="Option.TCheckbutton").grid(sticky="w", pady=(0, 11))
+                    style="Option.TCheckbutton").grid(sticky="w", pady=(0, 2))
+    smooth = tk.BooleanVar(value=video)
+    video_toggle = ttk.Checkbutton(panel, text="Video mode (smoother motion)", variable=smooth,
+                                   style="Option.TCheckbutton")
+    video_toggle.grid(sticky="w", pady=(0, 11))
     status = tk.StringVar(value="Open the game selector on the FixFinder.")
     ttk.Label(panel, textvariable=status, style="Status.TLabel", wraplength=410,
               justify="left").grid(sticky="ew", pady=(0, 12))
@@ -335,18 +397,20 @@ def show_app(serial, connect_virtual=False):
         if picker.current() < 0:
             status.set("Select a Windows display first.")
             return
-        source, show_cursor = source_list[picker.current()], cursor.get()
+        source, show_cursor, use_video = source_list[picker.current()], cursor.get(), smooth.get()
         stop.clear()
         picker.configure(state="disabled")
         connect_button.configure(state="disabled")
         refresh_button.configure(state="disabled")
         native_button.configure(state="disabled")
+        video_toggle.configure(state="disabled")
         stop_button.configure(state="normal")
         status.set("Connecting to the FixFinder…")
 
         def run():
             try:
-                stream(source, show_cursor, serial, stop, lambda message: mailbox.put((False, message)))
+                stream(source, show_cursor, serial, stop, lambda message: mailbox.put((False, message)),
+                       video=use_video)
             except (OSError, ValueError) as error:
                 mailbox.put((True, str(error)))
             else:
@@ -382,6 +446,7 @@ def show_app(serial, connect_virtual=False):
                     connect_button.configure(state="normal")
                     refresh_button.configure(state="normal")
                     native_button.configure(state="normal")
+                    video_toggle.configure(state="normal")
                     stop_button.configure(state="disabled")
         except Empty:
             pass
@@ -420,13 +485,14 @@ def main():
     parser.add_argument("--list-displays", action="store_true", help="list active Windows display sources")
     parser.add_argument("--connect-virtual", action="store_true",
                         help="connect on launch when exactly one secondary virtual display is active")
+    parser.add_argument("--video", action="store_true", help="start with Video mode selected")
     args = parser.parse_args()
     dpi_awareness()
     if args.list_displays:
         for source in monitors():
             print(source)
     else:
-        show_app(args.serial, args.connect_virtual)
+        show_app(args.serial, args.connect_virtual, args.video)
 
 
 if __name__ == "__main__":

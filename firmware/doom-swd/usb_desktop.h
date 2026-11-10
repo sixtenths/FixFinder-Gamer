@@ -15,6 +15,6 @@ void desktop_usb_batch_received(void);
 void desktop_usb_reset(void);
 bool desktop_usb_sent(void);
 bool desktop_usb_active(void);
-bool fixfinder_desktop_run(const volatile uint32_t *clock);
+bool fixfinder_desktop_run(const volatile uint32_t *clock, uint8_t *frame);
 
 #endif

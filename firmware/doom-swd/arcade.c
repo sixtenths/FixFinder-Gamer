@@ -852,7 +852,7 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
     bool redraw = true, wait_for_release = false;
     for (;;) {
 #ifdef FIXFINDER_USB_DESKTOP
-        if (fixfinder_desktop_run(clock)) {
+        if (fixfinder_desktop_run(clock, frame)) {
             release_lcd_shadow();
             redraw = wait_for_release = true;
         }

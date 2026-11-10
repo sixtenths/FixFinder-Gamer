@@ -117,6 +117,7 @@ try {
         if ($ArcadeOnly) {
             $objects += Compile 'firmware/doom-swd/arcade.c' 'arcade' $defines
             $objects += Compile 'firmware/doom-swd/usb_desktop.c' 'usb-desktop' $defines
+            $objects += Compile 'firmware/doom-swd/jpeg/tjpgd.c' 'desktop-jpeg' ($defines + '-O2')
             foreach ($game in @('racer', 'dino')) {
                 $objects += Compile "firmware/doom-swd/$game.c" $game ($defines + '-O2')
             }

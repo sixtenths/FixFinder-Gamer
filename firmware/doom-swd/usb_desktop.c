@@ -3,12 +3,21 @@
 #include "display.h"
 #include "../lcd/fixfinder_io.h"
 #include "custom_hid_core.h"
+#include "jpeg/tjpgd.h"
 #include <string.h>
 
 enum { START = 1, TILE, DATA, STOP, PING, BATCH };
 enum { RAW, RUNS, INDEXED, MONO, FOUR_COLORS, LZNT1, PATCH };
 enum { TILE_W = 40, TILE_H = 20, PIXELS = TILE_W * TILE_H,
        COLUMNS = DOOM_LCD_WIDTH / TILE_W, ROWS = DOOM_LCD_HEIGHT / TILE_H };
+enum { JPEG_BATCH = 0x8000, JPEG_CAPACITY = 24 * 1024, JPEG_WORK = 10 * 1024 };
+_Static_assert(JPEG_CAPACITY + JPEG_WORK <= DOOM_FRAME_WIDTH * DOOM_FRAME_HEIGHT,
+               "Desktop JPEG must fit the paused arcade framebuffer");
+
+struct jpeg_frame {
+    uint8_t *data;
+    unsigned int size, written, cursor;
+};
 
 extern usb_core_driver custom_hid;
 static uint16_t pixels[PIXELS] __attribute__((section(".doom_video")));
@@ -171,11 +180,72 @@ static void draw_tile(unsigned int index)
                             TILE_W, TILE_H, pixels);
 }
 
-static bool draw_batch(const uint8_t *data)
+static size_t jpeg_read(JDEC *decoder, uint8_t *dest, size_t requested)
+{
+    struct jpeg_frame *frame = decoder->device;
+    size_t left = frame->size - frame->cursor;
+    size_t count = requested < left ? requested : left;
+    if (dest) memcpy(dest, frame->data + frame->cursor, count);
+    frame->cursor += count;
+    return count;
+}
+
+static int jpeg_draw(JDEC *decoder, void *pixels_rgb565, JRECT *rect)
+{
+    unsigned int width = rect->right - rect->left + 1;
+    unsigned int height = rect->bottom - rect->top + 1;
+    if (decoder->width == DOOM_LCD_WIDTH) {
+        doom_dcs_write_rgb_rect(rect->left, rect->top, width, height, pixels_rgb565);
+        return 1;
+    }
+
+    /* The assembled JPEG and its decoder are in the arcade frame buffer. The
+       USB batch scratch is free until we acknowledge this frame. */
+    const uint16_t *source = pixels_rgb565;
+    uint16_t *scaled = (uint16_t *)doom_usb_video_scratch();
+    unsigned int stride = 2 * width;
+    for (unsigned int y = 0; y < height; ++y) {
+        uint16_t *row = scaled + 2 * y * stride;
+        for (unsigned int x = 0; x < width; ++x) {
+            uint16_t pixel = *source++;
+            row[2 * x] = row[2 * x + 1] = pixel;
+        }
+        memcpy(row + stride, row, stride * sizeof *row);
+    }
+    doom_dcs_write_rgb_rect(2 * rect->left, 2 * rect->top, stride, 2 * height, scaled);
+    return 1;
+}
+
+static bool draw_jpeg_chunk(struct jpeg_frame *frame, const uint8_t *data, unsigned int end)
+{
+    if (end <= 9 || end > DESKTOP_BATCH_SIZE) return false;
+    unsigned int offset = le16(data + 5), size = le16(data + 7), count = end - 9;
+    if (!offset) {
+        frame->size = size;
+        frame->written = frame->cursor = 0;
+    }
+    if (!size || size > JPEG_CAPACITY || size != frame->size ||
+        offset != frame->written || offset >= size || count > size - offset)
+        return false;
+    memcpy(frame->data + offset, data + 9, count);
+    frame->written += count;
+    if (frame->written < size) return true;
+
+    JDEC decoder;
+    if (jd_prepare(&decoder, jpeg_read, frame->data + JPEG_CAPACITY, JPEG_WORK, frame) != JDR_OK)
+        return false;
+    bool native = decoder.width == DOOM_LCD_WIDTH && decoder.height == DOOM_LCD_HEIGHT;
+    bool half = decoder.width == DOOM_LCD_WIDTH / 2 && decoder.height == DOOM_LCD_HEIGHT / 2;
+    return (native || half) && jd_decomp(&decoder, jpeg_draw, 0) == JDR_OK;
+}
+
+static bool draw_batch(const uint8_t *data, struct jpeg_frame *jpeg)
 {
     /* Report ID, sequence and used length, followed by tile records and padding. */
     unsigned int end = le16(data + 3);
-    if (data[0] != DESKTOP_BATCH_ID || end <= 5 || end > DESKTOP_BATCH_SIZE)
+    if (data[0] != DESKTOP_BATCH_ID) return false;
+    if (end & JPEG_BATCH) return draw_jpeg_chunk(jpeg, data, end & ~JPEG_BATCH);
+    if (end <= 5 || end > DESKTOP_BATCH_SIZE)
         return false;
     for (unsigned int offset = 5; offset < end;) {
         if (end - offset < 4) return false;
@@ -211,11 +281,12 @@ static void acknowledge(uint8_t op, uint8_t status, uint16_t token)
     reply[4] = token >> 8;
     reply[5] = op == START ? 1 : 0;  /* Feature-report batching capability. */
     reply[6] = op == START ? 1 : 0;  /* Compressed rectangles and short batches. */
+    reply[7] = op == START ? 1 : 0;  /* Full-frame JPEG video mode. */
     reply_pending = true;
     custom_hid_report_send(&custom_hid, reply, sizeof reply);
 }
 
-bool fixfinder_desktop_run(const volatile uint32_t *clock)
+bool fixfinder_desktop_run(const volatile uint32_t *clock, uint8_t *frame)
 {
     uint32_t irq = __get_PRIMASK();
     __disable_irq();
@@ -237,6 +308,7 @@ bool fixfinder_desktop_run(const volatile uint32_t *clock)
     fixfinder_set_led(FIXFINDER_LED_GREEN);
     uint32_t last_activity = *clock;
     bool back_released = false;
+    struct jpeg_frame jpeg = {.data = frame};
     while (running) {
         uint32_t now = *clock;
         bool back = (fixfinder_physical_keys(now) & KEY_BACK) != 0;
@@ -246,7 +318,7 @@ bool fixfinder_desktop_run(const volatile uint32_t *clock)
         if (!reply_pending && batch_ready) {
             const uint8_t *data = doom_usb_video_scratch();
             uint16_t token = le16(data + 1);
-            bool valid = draw_batch(data);
+            bool valid = draw_batch(data, &jpeg);
             __disable_irq();
             if (running) {
                 batch_ready = false;

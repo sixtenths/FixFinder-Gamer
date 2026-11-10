@@ -288,6 +288,9 @@ node->m_tnext = free_secnodes;
         $desktop = Join-Path $build 'usb-desktop.o'
         Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/usb_desktop.c', '-o', $desktop))
         $boardObjects += $desktop
+        $jpeg = Join-Path $build 'desktop-jpeg.o'
+        Invoke-Gcc ($platformFlags + @('-O2', '-c', 'firmware/doom-swd/jpeg/tjpgd.c', '-o', $jpeg))
+        $boardObjects += $jpeg
         if ($SaveFiles) { $platformFlags += '-DFIXFINDER_SAVE_FILES' }
         if ($PacmanFromEmmc) {
             $platformFlags += '-DFIXFINDER_PACMAN_EMMC'
