@@ -12,6 +12,7 @@ GAME_CAPACITY = 0x08300000 - GAME_BASE
 MANIFEST_MAGIC = 0x31474646
 VID = 0x28E9
 LOADER_PID = 0x028B
+DESKTOP_PID = 0x028E
 
 
 def vectors_ok(image, base, stack_top):

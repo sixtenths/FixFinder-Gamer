@@ -7,7 +7,7 @@ import struct
 import sys
 import time
 import zlib
-from fixfinder_image import GAME_BASE, GAME_CAPACITY, LOADER_PID, VID, split_usb_image
+from fixfinder_image import DESKTOP_PID, GAME_BASE, GAME_CAPACITY, LOADER_PID, VID, split_usb_image
 
 GAME_PID = 0x028C
 VIDEO_GAME_PID = 0x028D
@@ -54,7 +54,7 @@ def connect(hid, serial, wait):
     deadline = time.monotonic() + wait
     requested_reset = False
     while True:
-        devices = list(hid.interfaces(VID, (LOADER_PID, VIDEO_GAME_PID, GAME_PID)))
+        devices = list(hid.interfaces(VID, (LOADER_PID, VIDEO_GAME_PID, DESKTOP_PID, GAME_PID)))
         if serial is None:
             serials = {actual_serial for _, actual_serial, _ in devices}
             if len(serials) > 1:
@@ -74,10 +74,10 @@ def connect(hid, serial, wait):
             except OSError:
                 pass
         if not requested_reset:
-            path = paths.get(VIDEO_GAME_PID) or paths.get(GAME_PID)
+            path = paths.get(DESKTOP_PID) or paths.get(VIDEO_GAME_PID) or paths.get(GAME_PID)
             if path is not None:
                 try:
-                    device = hid.Device(path)
+                    device = hid.Device(path, output_size=REPORT_SIZE) if DESKTOP_PID in paths else hid.Device(path)
                 except OSError:
                     pass
                 else:

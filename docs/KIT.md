@@ -28,7 +28,7 @@ python scripts/Install-UsbGame.py --wait 45 downloads/FixFinder-Arcade-Flash.bin
 
 ```powershell
 Get-PnpDevice -PresentOnly |
-    Where-Object InstanceId -Match '^USB\\VID_28E9&PID_028[BCD]\\' |
+    Where-Object InstanceId -Match '^USB\\VID_28E9&PID_028[BCDE]\\' |
     Select-Object Status,InstanceId
 
 $serial = 'YOUR_SCANNER_SERIAL'

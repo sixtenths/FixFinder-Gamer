@@ -51,10 +51,19 @@ OF SUCH DAMAGE.
 #include "../firmware/doom-swd/usb_video.h"
 #include "../firmware/doom-swd/usb_input.h"
 #undef DESC_LEN_REPORT
-#define DESC_LEN_REPORT              31U
 #undef CUSTOMHID_IN_PACKET
 #define CUSTOMHID_IN_PACKET          VIDEO_REPORT_SIZE
+#ifdef FIXFINDER_USB_DESKTOP
+#include "../firmware/doom-swd/usb_desktop.h"
+#define DESC_LEN_REPORT              43U
+#undef CUSTOMHID_OUT_PACKET
+#define CUSTOMHID_OUT_PACKET         DESKTOP_REPORT_SIZE
+#define USBD_PID                     0x028EU
+static uint8_t desktop_out[DESKTOP_REPORT_SIZE] __attribute__((aligned(4)));
+#else
+#define DESC_LEN_REPORT              31U
 #define USBD_PID                     0x028DU
+#endif
 #else
 #define USBD_PID                     0x028CU
 #endif
@@ -236,7 +245,12 @@ __ALIGN_BEGIN const uint8_t customhid_report_descriptor[DESC_LEN_REPORT] __ALIGN
     0x85, 0x14, 0x15, 0x00, 0x26, 0xff, 0x00,
     0x75, 0x08, 0x95, 0x01, 0x09, 0x02, 0x91, 0x02,
     0x85, VIDEO_REPORT_ID, 0x95, VIDEO_REPORT_SIZE - 1,
-    0x09, 0x03, 0x81, 0x02, 0xc0
+    0x09, 0x03, 0x81, 0x02,
+#ifdef FIXFINDER_USB_DESKTOP
+    0x85, DESKTOP_REPORT_ID, 0x95, DESKTOP_REPORT_SIZE - 1,
+    0x09, 0x04, 0x91, 0x02, 0x09, 0x05, 0x81, 0x02,
+#endif
+    0xc0
 #else
     0x06U, 0x00U, 0xFFU, /* USAGE_PAGE (Vendor Defined: 0xFF00) */
     0x09U, 0x00U,        /* USAGE (Custom Device)               */
@@ -374,6 +388,9 @@ static uint8_t custom_hid_init(usb_dev *udev, uint8_t config_index)
     doom_usb_video_reset();
     doom_usb_input_reset();
 #endif
+#ifdef FIXFINDER_USB_DESKTOP
+    desktop_usb_reset();
+#endif
 
     /* initialize the data TX endpoint */
     usbd_ep_setup(udev, &(custom_hid_config_desc.hid_epin));
@@ -384,6 +401,8 @@ static uint8_t custom_hid_init(usb_dev *udev, uint8_t config_index)
     /* prepare receive data */
 #ifdef FIXFINDER_USB_LOADER
     loader_usb_arm();
+#elif defined(FIXFINDER_USB_DESKTOP)
+    usbd_ep_recev(udev, CUSTOMHID_OUT_EP, desktop_out, sizeof desktop_out);
 #else
     usbd_ep_recev(udev, CUSTOMHID_OUT_EP, hid_handler.data, 2U);
 #endif
@@ -413,6 +432,9 @@ static uint8_t custom_hid_deinit(usb_dev *udev, uint8_t config_index)
 #ifdef FIXFINDER_USB_VIDEO
     doom_usb_video_reset();
     doom_usb_input_reset();
+#endif
+#ifdef FIXFINDER_USB_DESKTOP
+    desktop_usb_reset();
 #endif
     /* deinitialize HID endpoints */
     usbd_ep_clear(udev, CUSTOMHID_IN_EP);
@@ -486,6 +508,9 @@ static uint8_t custom_hid_data_in(usb_dev *udev, uint8_t ep_num)
 #ifdef FIXFINDER_USB_LOADER
     loader_usb_sent();
 #elif defined(FIXFINDER_USB_VIDEO)
+#ifdef FIXFINDER_USB_DESKTOP
+    if (desktop_usb_sent()) return USBD_OK;
+#endif
     doom_usb_video_sent(udev);
 #endif
     return USBD_OK;
@@ -503,23 +528,36 @@ static uint8_t custom_hid_data_out(usb_dev *udev, uint8_t ep_num)
 #ifdef FIXFINDER_USB_LOADER
     loader_usb_receive(udev->dev.transc_out[ep_num].xfer_count);
 #else
+#ifdef FIXFINDER_USB_DESKTOP
+    uint8_t *data = desktop_out;
+    unsigned int capacity = sizeof desktop_out;
+#else
     custom_hid_handler *hid = (custom_hid_handler *)udev->dev.class_data[CUSTOM_HID_INTERFACE];
+    uint8_t *data = hid->data;
+    unsigned int capacity = 2U;
+#endif
+    unsigned int count = udev->dev.transc_out[ep_num].xfer_count;
 
 #ifdef FIXFINDER_USB_GAME
-    if (udev->dev.transc_out[ep_num].xfer_count == 2U &&
-        hid->data[0] == 0x14U && hid->data[1] == 0xb7U) {
+    if ((count == 2U || count == capacity) && data[0] == 0x14U && data[1] == 0xb7U) {
         BOOT_COOKIE[0] = BOOT_LOADER;
         BOOT_COOKIE[1] = ~BOOT_LOADER;
         NVIC_SystemReset();
     }
 #endif
+#ifdef FIXFINDER_USB_DESKTOP
+    if (count == capacity && data[0] == DESKTOP_REPORT_ID) desktop_usb_receive(data);
+    if (desktop_usb_active()) goto rearm;
+#endif
 #ifdef FIXFINDER_USB_VIDEO
-    if (udev->dev.transc_out[ep_num].xfer_count == 2U && hid->data[0] == 0x14U) {
-        if (!doom_usb_input_request(hid->data[1])) doom_usb_video_request(hid->data[1]);
+    if ((count == 2U || count == capacity) && data[0] == 0x14U) {
+        if (!doom_usb_input_request(data[1])) doom_usb_video_request(data[1]);
     }
 #endif
-    /* Ignore output reports and rearm the OUT endpoint. */
-    usbd_ep_recev(udev, CUSTOMHID_OUT_EP, hid->data, 2U);
+#ifdef FIXFINDER_USB_DESKTOP
+rearm:
+#endif
+    usbd_ep_recev(udev, CUSTOMHID_OUT_EP, data, capacity);
 #endif
 
     return USBD_OK;

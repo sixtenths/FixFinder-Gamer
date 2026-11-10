@@ -13,6 +13,9 @@
 #define VIDEO_PACKED_FIRST_BAND 0xd1U
 
 void doom_usb_video_reset(void);
+bool doom_usb_video_busy(void);
+/* Available to the desktop mode while video capture is suspended. */
+uint8_t *doom_usb_video_scratch(void);
 void doom_usb_video_request(uint8_t command);
 void doom_usb_video_sent(usb_dev *device);
 void doom_usb_video_capture(const uint8_t *frame, const uint8_t *palette);

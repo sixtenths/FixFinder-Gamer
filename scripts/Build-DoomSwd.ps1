@@ -274,7 +274,10 @@ node->m_tnext = free_secnodes;
     $runtime = Join-Path $build 'runtime.o'
     $display = Join-Path $build 'display.o'
     if ($Arcade) {
-        $platformFlags += '-DFIXFINDER_ARCADE'
+        $platformFlags += '-DFIXFINDER_ARCADE', '-DFIXFINDER_USB_DESKTOP'
+        $desktop = Join-Path $build 'usb-desktop.o'
+        Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/usb_desktop.c', '-o', $desktop))
+        $boardObjects += $desktop
         if ($SaveFiles) { $platformFlags += '-DFIXFINDER_SAVE_FILES' }
         if ($PacmanFromEmmc) {
             $platformFlags += '-DFIXFINDER_PACMAN_EMMC'

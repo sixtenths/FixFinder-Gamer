@@ -69,7 +69,7 @@ try {
         if ($GameSdk -or $ArcadeOnly) {
             $defines += '-DFIXFINDER_USB_VIDEO', '-Ifirmware/game-sdk'
         }
-        if ($ArcadeOnly) { $defines += '-DFIXFINDER_ARCADE_ONLY' }
+        if ($ArcadeOnly) { $defines += '-DFIXFINDER_ARCADE_ONLY', '-DFIXFINDER_USB_DESKTOP' }
         if ($SaveFiles) {
             $defines += '-DFIXFINDER_SAVE_FILES', '-DFIXFINDER_EMMC_LIBRARY', '-DFIXFINDER_STORAGE_PROBE'
         }
@@ -90,6 +90,7 @@ try {
         }
         if ($ArcadeOnly) {
             $objects += Compile 'firmware/doom-swd/arcade.c' 'arcade' $defines
+            $objects += Compile 'firmware/doom-swd/usb_desktop.c' 'usb-desktop' $defines
             foreach ($game in @('racer', 'dino')) {
                 $objects += Compile "firmware/doom-swd/$game.c" $game ($defines + '-O2')
             }

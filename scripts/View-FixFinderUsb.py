@@ -6,6 +6,7 @@ import time
 import zlib
 
 import fixfinder_hid_windows as hid
+from fixfinder_image import DESKTOP_PID, VID
 
 
 WIDTH, HEIGHT = 240, 160
@@ -49,10 +50,12 @@ def send_keys(device, mask):
 
 
 def connect(serial):
-    paths = list(hid.handles(0x28E9, 0x028D, serial))
-    if len(paths) != 1:
+    matches = [(pid, path) for pid, actual, path in hid.interfaces(VID, (0x028D, DESKTOP_PID))
+               if actual == serial]
+    if len(matches) != 1:
         raise OSError(f"Waiting for one USB video game with serial {serial}.")
-    device = hid.Device(paths[0])
+    pid, path = matches[0]
+    device = hid.Device(path, output_size=REPORT_SIZE if pid == DESKTOP_PID else 0)
     try:
         device.set_input_buffers(256)
     except OSError:

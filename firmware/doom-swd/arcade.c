@@ -10,6 +10,9 @@
 #include "dino.h"
 #include "racer.h"
 #include "usb_video.h"
+#ifdef FIXFINDER_USB_DESKTOP
+#include "usb_desktop.h"
+#endif
 #include "../lcd/fixfinder_io.h"
 #include "../usb-loader/screen_art.h"
 #ifndef FIXFINDER_ARCADE_ONLY
@@ -826,6 +829,12 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
     doom_display_set_palette(palette);
     bool redraw = true, wait_for_release = false;
     for (;;) {
+#ifdef FIXFINDER_USB_DESKTOP
+        if (fixfinder_desktop_run(clock)) {
+            release_lcd_shadow();
+            redraw = wait_for_release = true;
+        }
+#endif
         uint32_t now=*clock, keys=fixfinder_keys(now);
         if (!keys) wait_for_release = false;
         if (!wait_for_release && keys!=previous) {

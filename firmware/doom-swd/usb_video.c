@@ -62,6 +62,16 @@ void doom_usb_video_reset(void)
     native_capture = false;
 }
 
+bool doom_usb_video_busy(void)
+{
+    return state == SENDING;
+}
+
+uint8_t *doom_usb_video_scratch(void)
+{
+    return top;
+}
+
 void doom_usb_video_request(uint8_t command)
 {
 #ifdef FIXFINDER_STORAGE_PROBE

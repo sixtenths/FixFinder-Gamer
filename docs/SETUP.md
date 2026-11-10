@@ -162,11 +162,11 @@ python scripts/Install-UsbGame.py --wait 45 downloads/FixFinder-Arcade-Flash.bin
 
 The installer detects a single compatible scanner, enters its loader, flashes the application, checks its CRC on the scanner, and starts it. For a combined image, it validates and extracts the application. The resident recovery loader stays installed. A first-time conversion from stock or replacing the resident loader itself requires SWD.
 
-If you have several converted scanners connected, use `--serial` to select one. To find your scanner’s HID serial in PowerShell, run the command below. It is the last part of the instance ID. The loader uses product ID `028B`, older games use `028C`, and games with USB video use `028D`.
+If you have several converted scanners connected, use `--serial` to select one. To find your scanner’s HID serial in PowerShell, run the command below. It is the last part of the instance ID. The loader uses product ID `028B`, older games use `028C`, games with USB video use `028D`, and desktop-enabled arcade builds use `028E`.
 
 ```powershell
 Get-PnpDevice -PresentOnly |
-    Where-Object InstanceId -Match '^USB\\VID_28E9&PID_028[BCD]\\' |
+    Where-Object InstanceId -Match '^USB\\VID_28E9&PID_028[BCDE]\\' |
     Select-Object Status,InstanceId
 
 $serial = 'YOUR_SCANNER_SERIAL'

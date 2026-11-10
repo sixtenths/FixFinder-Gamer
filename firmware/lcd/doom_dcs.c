@@ -118,6 +118,13 @@ void doom_dcs_write_native(unsigned int row, const uint8_t *indices)
     write_row(NULL, row, doom_display_native_row(indices));
 }
 
+void doom_dcs_write_rgb_rect(unsigned int x, unsigned int y, unsigned int width,
+                             unsigned int height, const uint16_t *pixels)
+{
+    begin_panel_window(x, y, width, height);
+    write_pixels(pixels, width * height);
+}
+
 /* This buffer is in DMA-accessible SRAM. Each halfword holds two successive
  * byte writes to the panel's data register, high byte first. */
 static uint16_t dma_row[DOOM_LCD_WIDTH] __attribute__((aligned(4)));

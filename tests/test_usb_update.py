@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 with patch.object(sys, "path", [str(ROOT / "scripts"), *sys.path]):
-    from fixfinder_image import GAME_BASE, LOADER_PID, MANIFEST_MAGIC, VID, combine_image, split_usb_image
+    from fixfinder_image import DESKTOP_PID, GAME_BASE, LOADER_PID, MANIFEST_MAGIC, VID, combine_image, split_usb_image
     INSTALLER = run_path(str(ROOT / "scripts/Install-UsbGame.py"))
 
 CONNECT = INSTALLER["connect"]
@@ -46,6 +46,19 @@ class UsbImageTest(unittest.TestCase):
 
 
 class UsbTargetTest(unittest.TestCase):
+    def test_desktop_game_uses_its_wider_output_report_to_enter_loader(self):
+        hid = Mock()
+        hid.interfaces.side_effect = [
+            [(DESKTOP_PID, "A", "desktop-a")],
+            [(LOADER_PID, "A", "loader-a")],
+        ]
+        game, loader = Mock(), Mock()
+        hid.Device.side_effect = (game, loader)
+        with patch.object(INSTALLER["time"], "sleep"):
+            self.assertEqual(CONNECT(hid, "A", 1), (loader, "A"))
+        self.assertEqual(hid.Device.call_args_list[0].kwargs, {"output_size": 64})
+        game.write.assert_called_once_with(b"\x14\xb7")
+
     def test_auto_selection_survives_reset_without_switching_devices(self):
         hid = Mock()
         hid.interfaces.side_effect = [

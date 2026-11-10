@@ -80,7 +80,8 @@ def handles(vid, pid, serial):
 
 
 class Device:
-    def __init__(self, path):
+    def __init__(self, path, output_size=0):
+        self.output_size = output_size
         self.handle = open_file(path, 0xC0000000, 3, None, 3, 0x40000000, None)
         if self.handle == pointer(-1).value:
             raise c.WinError(c.get_last_error())
@@ -119,6 +120,8 @@ class Device:
         return done.value
 
     def write(self, data):
+        if self.output_size:
+            data = data.ljust(self.output_size, b"\0")
         return self.transfer(write_file, c.create_string_buffer(data, len(data)), 3000)
 
     def read(self, length, timeout):
