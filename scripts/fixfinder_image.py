@@ -30,15 +30,35 @@ def validate_game(data):
     return data + b"\xff" * (-len(data) % 4)
 
 
-def combine_image(loader, game):
-    manifest_offset = GAME_MANIFEST - FLASH_BASE
-    if not 8 <= len(loader) <= manifest_offset or not vectors_ok(loader, FLASH_BASE, 0x20030000):
+def validate_loader(loader):
+    if not 8 <= len(loader) <= GAME_MANIFEST - FLASH_BASE or not vectors_ok(loader, FLASH_BASE, 0x20030000):
         raise ValueError("Expected the resident loader linked at 0x08000000 within sector 0.")
     loader_id = struct.pack("<HH", VID, LOADER_PID)
     if not any(loader[i:i + 2] == b"\x12\x01" and loader[i + 8:i + 12] == loader_id
                for i in range(len(loader) - 17)):
         raise ValueError("Expected the FixFinder 028B USB loader, not the archived V8 image.")
 
+def split_usb_image(data):
+    """Return the application payload and whether it came from a combined image."""
+    manifest_offset = GAME_MANIFEST - FLASH_BASE
+    game_offset = GAME_BASE - FLASH_BASE
+    if (len(data) >= 8 and vectors_ok(data, GAME_BASE, 0x2002FFF8)
+            or len(data) < game_offset
+            or struct.unpack_from("<I", data, manifest_offset)[0] != MANIFEST_MAGIC):
+        return validate_game(data), False
+
+    validate_loader(data[:manifest_offset])
+    size, crc = struct.unpack_from("<II", data, manifest_offset + 4)
+    game = data[game_offset:]
+    if (len(game) != size or size % 4 or zlib.crc32(game) != crc
+            or data[manifest_offset + 12:game_offset] != b"\xff" * (game_offset - manifest_offset - 12)):
+        raise ValueError("Combined flash image has an invalid game size, CRC, or manifest padding.")
+    return validate_game(game), True
+
+
+def combine_image(loader, game):
+    validate_loader(loader)
+    manifest_offset = GAME_MANIFEST - FLASH_BASE
     game = validate_game(game)
     manifest = struct.pack("<III", MANIFEST_MAGIC, len(game), zlib.crc32(game))
     return (

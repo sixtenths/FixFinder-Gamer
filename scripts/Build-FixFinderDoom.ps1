@@ -3,7 +3,9 @@ param(
     [string]$Wad,
     [string]$EngineSource,
     [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin",
-    [switch]$Episode
+    [switch]$Episode,
+    [string[]]$PacmanRom,
+    [switch]$PacmanFromEmmc
 )
 
 $ErrorActionPreference = 'Stop'
@@ -66,6 +68,12 @@ if ($Episode) {
     python $prepare $compacted $assets --split-episode-maps $pack | Out-Host
     if ($LASTEXITCODE) { throw 'Could not split the episode map pack.' }
     $options.ConvertedWad = $assets
+    $options.EmmcLibrary = $true
+}
+
+if ($PacmanRom) { $options.PacmanRom = $PacmanRom }
+if ($PacmanFromEmmc) {
+    $options.PacmanFromEmmc = $true
     $options.EmmcLibrary = $true
 }
 

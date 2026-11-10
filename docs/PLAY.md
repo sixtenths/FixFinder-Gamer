@@ -27,6 +27,11 @@ The green, yellow and red LEDs track health. The built-in beeper plays different
 
 | Game | Controls |
 | --- | --- |
+| Midway Pac-Man | Steer with Erase, Down, Back, and Enter. Press Enter + Back to pause or resume. Press Erase + Enter to start another game. In the USB viewer, use the direction keys, P to pause, and R to restart. Requires the local Pac-Man ROM build. |
+| Maze Chase | Use the same directions to collect dots and dodge ghosts. Included in builds without Pac-Man. |
+| Snake | Use Erase, Down, Back, and Enter to steer up, down, left, and right. |
+| Pong | Move your paddle with Erase and Down. |
+| Breakout | Move the paddle with Back and Enter. Clear the bricks before losing three balls. |
 | Neon Circuit | Steer with Back / Enter, boost with Erase, and brake with Down. From the USB viewer, use Left / Right or A / D to steer, Up, W, or Space to boost, and Down / S to brake. Pass the traffic and reach the finish before the timer runs out. |
 | Dino Run | Tap any scanner button or press **Space** in the viewer to jump. Clear the cacti as the runner picks up speed. |
 
@@ -35,6 +40,11 @@ The LEDs are off in the selector and yellow while a game loads. During play they
 | Game | Green | Yellow | Red |
 | --- | --- | --- | --- |
 | DOOM | Over 50 health | 26–50 health | 25 health or less |
+| Midway Pac-Man | Three or more lives | Two lives, starting, or paused | Last life, just lost a life, or game over |
+| Snake | Playing or won | Just ate food | Game over |
+| Maze Chase | Three lives | Two lives or powered up | Last life or game over |
+| Pong | Tied, ahead, or won | Opponent is ahead | Lost the match |
+| Breakout | Three balls or won | Two balls | Last ball or game over |
 | Neon Circuit | Racing or finished | Off road or under seven seconds left | Collision or time expired |
 | Dino Run | Running | Loading | Game over |
 

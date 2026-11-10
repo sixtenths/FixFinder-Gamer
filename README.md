@@ -21,9 +21,9 @@ Turn a compatible AutoZone FixFinder 5034VSM into a handheld arcade. Play DOOM a
 | Game or feature | What you get |
 | --- | --- |
 | **DOOM** | Start with Hangar (E1M1). All nine maps of *Knee-Deep in the Dead* were tested with the matching eMMC pack on the project’s development scanner. The beeper plays cues for weapons, doors, pickups, and damage. |
-| **Built-in arcade** | Neon Circuit and Dino Run, a native racer and runner that render at 320 × 240. |
+| **Built-in arcade** | Neon Circuit, Dino Run, Pong, Snake, Breakout, and Maze Chase. Local builds can use the original Midway Pac-Man ROM. |
 | **USB viewer** | A 320 × 240 Windows preview with keyboard controls. Use the physical controls or the keyboard while the scanner is connected. |
-| **USB game loader** | First-time SWD installation, then USB installs of compatible game images with on-device verification. |
+| **USB firmware updates** | After first-time SWD setup, install compatible application or combined flash BINs over USB with on-device verification. [USB update guide](docs/SETUP.md#install-or-replace-the-game-over-usb) |
 
 ## Costs and first steps
 

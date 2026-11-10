@@ -32,7 +32,7 @@ You don’t need a second scanner. The second unit in the [hardware notes](LCD.m
 
 ### What you gain and what you give up
 
-You get Dino Run and Neon Circuit on the original LCD and buttons, with LED and beeper feedback. The DOOM build adds E1M1. The Windows viewer streams at the panel’s 320 × 240 resolution and lets you play with a keyboard. After the first SWD install, you can build and swap compatible game images over USB without reopening the case.
+You get Dino Run, Neon Circuit, Pong, Snake, Breakout, and Maze Chase on the original LCD and buttons, with LED and beeper feedback. The DOOM build adds E1M1. The Windows viewer streams at the panel’s 320 × 240 resolution and lets you play with a keyboard. After the first SWD install, you can build and swap compatible game images over USB without reopening the case.
 
 You give up the scanner’s normal automotive functions while the arcade is installed. A failed flash may leave the scanner unable to boot and require another SWD session. If factory recovery matters, the practical cost could be a replacement diagnostic tool. Later DOOM maps require a matching eMMC pack. The included writer is locked to the development unit.
 
@@ -154,7 +154,15 @@ The seed writes a temporary file, verifies the bytes, and renames the file to `F
 
 ## Install or replace the game over USB
 
-Connect the scanner using a USB data cable. Close the viewer before installing. Find your own scanner’s HID serial in PowerShell. It is the last part of the instance ID. The loader uses product ID `028B`, older games use `028C`, and games with USB video use `028D`.
+Once the resident loader is installed, leave the case closed and connect the scanner using a USB data cable. Close the viewer before installing. From the project folder, run the installer with either an application BIN or a combined flash BIN made by the FixFinder packer.
+
+```powershell
+python scripts/Install-UsbGame.py --wait 45 downloads/FixFinder-Arcade-Flash.bin
+```
+
+The installer detects a single compatible scanner, enters its loader, flashes the application, checks its CRC on the scanner, and starts it. For a combined image, it validates and extracts the application. The resident recovery loader stays installed. A first-time conversion from stock or replacing the resident loader itself requires SWD.
+
+If you have several converted scanners connected, use `--serial` to select one. To find your scanner’s HID serial in PowerShell, run the command below. It is the last part of the instance ID. The loader uses product ID `028B`, older games use `028C`, and games with USB video use `028D`.
 
 ```powershell
 Get-PnpDevice -PresentOnly |
@@ -168,6 +176,17 @@ python scripts/Install-UsbGame.py --serial $serial --wait 45 $game
 
 Wait for CRC verification and game launch. The slot holds one installable image, which can contain multiple games. If the loader does not appear, start the installer and reconnect the USB cable while it waits.
 
+## Add original arcade Pac-Man
+
+Use your local MAME `pacman.zip` to build the original Midway arcade game alongside the rest of the lineup. For split sets, supply both `pacman.zip` and `puckman.zip` as an array to `-PacmanRom`. The packer checks the original ROM checksums.
+
+```powershell
+$game = ./scripts/Build-FixFinderDoom.ps1 -PacmanRom 'C:\path\to\pacman.zip'
+python scripts/Install-UsbGame.py --wait 45 $game
+```
+
+If a verified `PACMAN.ROM` is already on your scanner’s FAT32 eMMC, use `-PacmanFromEmmc` instead. The project scanner uses `-Episode -PacmanFromEmmc` so both the DOOM map pack and Pac-Man ROM stay on eMMC during firmware updates.
+
 ## Check eMMC
 
 With the viewer closed, `python scripts/Read-FixFinderStorage.py --serial $serial` reports the eMMC capacity on builds with the storage probe enabled.
@@ -178,7 +197,7 @@ With the viewer closed, `python scripts/Read-FixFinderStorage.py --serial $seria
 | --- | --- |
 | No USB device | Use a known data cable and a direct PC port. The loader and game USB IDs only appear after the custom firmware is installed. |
 | Installer cannot find the loader | Start the installer, then reconnect scanner USB while it waits. |
-| BIN is rejected | Use the game BIN built with `-UsbGame`. The resident loader and SWD diagnostics use different addresses. |
+| BIN is rejected | Use the game BIN built with `-UsbGame`. A FixFinder combined flash BIN also works. Standalone loader BINs and SWD diagnostics require SWD. |
 | Upload was interrupted | Reconnect USB and run the installer again. The loader starts the game after verification. |
 | DOOM map pack missing | Check the pack filename and use the pack built alongside the episode’s graphics WAD. |
 | No SWD response | Check scanner USB power, J5 orientation, shared ground, and the Pi GPIO-chip number. Start at 50 kHz. |

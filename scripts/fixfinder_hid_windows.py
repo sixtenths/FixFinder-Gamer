@@ -43,7 +43,7 @@ list_paths = api(cfg, "CM_Get_Device_Interface_ListW", w.DWORD, pointer,
                  w.LPCWSTR, w.LPWSTR, w.ULONG, w.ULONG)
 
 
-def handles(vid, pid, serial):
+def interfaces(vid, pids):
     guid = (w.DWORD * 4)()
     get_guid(c.byref(guid))
     size = w.DWORD()
@@ -57,19 +57,26 @@ def handles(vid, pid, serial):
             break
     if result:
         raise OSError(f"HID enumeration failed ({result:#x}).")
-    match = f"#vid_{vid:04x}&pid_{pid:04x}"
+    prefixes = {f"#vid_{vid:04x}&pid_{pid:04x}": pid for pid in pids}
     for path in paths[:].split("\0"):
-        if match not in path.lower():
+        pid = next((pid for prefix, pid in prefixes.items() if prefix in path.lower()), None)
+        if pid is None:
             continue
         handle = open_file(path, 0, 3, None, 3, 0, None)
         if handle == pointer(-1).value:
             continue
         try:
             value = c.create_unicode_buffer(128)
-            if get_serial(handle, value, c.sizeof(value)) and value.value.upper() == serial:
-                yield path
+            if get_serial(handle, value, c.sizeof(value)) and value.value:
+                yield pid, value.value.upper(), path
         finally:
             close_handle(handle)
+
+
+def handles(vid, pid, serial):
+    for _, actual_serial, path in interfaces(vid, (pid,)):
+        if actual_serial == serial:
+            yield path
 
 
 class Device:

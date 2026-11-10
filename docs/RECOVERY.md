@@ -86,7 +86,7 @@ Use a sector download as shown. If the loader has no valid game yet, the display
 
 ## Install the combined arcade image over SWD
 
-The combined image writes the loader, Dino Run, and Neon Circuit in one step. Use it only after the read-only checks and backup pass. It overwrites all touched main-flash sectors through the end of the game. For a scanner that already has the loader, install the game BIN over USB. [Combined image](../downloads/FixFinder-Arcade-Flash.bin) · [Read-only checks and backup](#check-the-scanner-over-swd) · [USB game installer](SETUP.md#install-or-replace-the-game-over-usb)
+The combined image writes the loader and built-in arcade in one step. Use it only after the read-only checks and backup pass. It overwrites all touched main-flash sectors through the end of the game. For a scanner that already has the loader, use the combined image or the separate application BIN with the USB installer. [Combined image](../downloads/FixFinder-Arcade-Flash.bin) · [Read-only checks and backup](#check-the-scanner-over-swd) · [USB game installer](SETUP.md#install-or-replace-the-game-over-usb)
 
 Copy `FixFinder-Arcade-Flash.bin` to the Pi and match its SHA-256 to the [published checksum](../downloads/SHA256SUMS). Use the `ffprobe` function from the read-only checks and the three UID words you recorded. If a tool asks to unlock read protection or erase the whole chip, cancel.
 
