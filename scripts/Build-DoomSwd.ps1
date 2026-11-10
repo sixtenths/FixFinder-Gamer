@@ -149,6 +149,7 @@ if ((uint32_t)l->filepos & FIXFINDER_EXTERNAL_MAP)
     $zoneKiB = if ($externalMaps) { 155 } else { 144 }
     Replace-EngineSource z_zone 'maxHeapSize = \(256 \* 1024\);' "maxHeapSize = ($zoneKiB * 1024);"
     $replacements = @('d_main.o', 'w_wad.o', 'z_zone.o')
+    if ($SaveFiles) { $replacements += 'g_game.o' }
     if ($externalMaps) {
         Replace-EngineSource p_setup 'lumpnum = W_GetNumForName\(lumpname\);' @'
 lumpnum = W_GetNumForName(lumpname);
