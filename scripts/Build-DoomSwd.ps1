@@ -150,6 +150,10 @@ if ((uint32_t)l->filepos & FIXFINDER_EXTERNAL_MAP)
     Replace-EngineSource z_zone 'maxHeapSize = \(256 \* 1024\);' "maxHeapSize = ($zoneKiB * 1024);"
     $replacements = @('d_main.o', 'w_wad.o', 'z_zone.o')
     if ($SaveFiles) { $replacements += 'g_game.o' }
+    if ($FixFinderLcd) {
+        Replace-EngineSource p_pspr '(void A_FireCGun\([^\r\n]+\)\s*\{\s*if \(player->ammo\[weaponinfo\[player->readyweapon\]\.ammo\]\)\s*S_StartSound\(player->mo, )sfx_pistol' '${1}sfx_chgun'
+        $replacements += 'p_pspr.o'
+    }
     if ($externalMaps) {
         Replace-EngineSource p_setup 'lumpnum = W_GetNumForName\(lumpname\);' @'
 lumpnum = W_GetNumForName(lumpname);

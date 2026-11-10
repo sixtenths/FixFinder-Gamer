@@ -15,7 +15,7 @@ $sonic = ./scripts/Build-FixFinderSonic.ps1 -Rom 'C:\path\to\sonic.bin'
 python scripts/Install-UsbGame.py --wait 45 $sonic
 ```
 
-Sonic uses the full application slot. To switch back, install your arcade image with the same USB command. Arcade saves and the DOOM map pack stay on eMMC.
+Sonic uses the same application slot as the arcade, so the scanner boots straight into Sonic after you install it. To restore the game selector, pass your arcade image to the same USB installer. Use your locally built episode image if you want DOOM and Pac-Man in the selector. Arcade saves and the game data stay on eMMC. [Arcade and episode installation](SETUP.md#build-and-install-the-complete-shareware-episode)
 
 | Action | Scanner | USB viewer |
 | --- | --- | --- |

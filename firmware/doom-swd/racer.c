@@ -216,6 +216,9 @@ static void draw(uint8_t *image,const struct race *state,uint32_t time,bool firs
 
 static void advance(struct race *state,uint32_t keys)
 {
+    static const struct fixfinder_note crash_sound[] = {
+        {1220, 5}, {340, 19}, {510, 8}, {180, 55}, {0, 0}
+    };
     int limit=(keys&KEY_DOWN)?43:(keys&KEY_ERASE)?176:113;
     if (abs(state->lane)>234 && limit>66) limit=66;
     state->speed+=clamp(limit-state->speed,-4,2);
@@ -232,7 +235,7 @@ static void advance(struct race *state,uint32_t keys)
             rival->hit=true;
             state->speed/=2;
             state->flash=14;
-            fixfinder_beep(32);
+            fixfinder_play_sound(crash_sound, 2);
         }
         if (gap<70) {
             rival->distance=state->distance+2700+(i*213+state->ticks*7)%1000;
@@ -245,6 +248,7 @@ static void advance(struct race *state,uint32_t keys)
 
 enum race_result fixfinder_race(const volatile uint32_t *clock, bool resume)
 {
+    static const struct fixfinder_note boost_sound[] = {{370, 21}, {510, 27}, {715, 42}, {0, 0}};
     uint8_t *image=malloc(W*H);
     if (!image) return RACE_EXIT;
     struct {
@@ -257,7 +261,7 @@ enum race_result fixfinder_race(const volatile uint32_t *clock, bool resume)
     skyline(image);
     uint32_t step=*clock, started=step-saved.elapsed, render=step;
     enum race_result result=RACE_EXIT;
-    bool first=true;
+    bool first=true, was_boosting=false;
     for (;;) {
         uint32_t now=*clock, elapsed=now-started;
         uint32_t keys=fixfinder_physical_keys(now), remote=doom_usb_input_buttons();
@@ -275,6 +279,9 @@ enum race_result fixfinder_race(const volatile uint32_t *clock, bool resume)
         if (remote&DOOM_BUTTON_RIGHT) keys|=KEY_ENTER;
         if (remote&(DOOM_BUTTON_FORWARD|DOOM_BUTTON_FIRE)) keys|=KEY_ERASE;
         if (remote&DOOM_BUTTON_BACK) keys|=KEY_DOWN;
+        bool boosting = (keys & (KEY_DOWN | KEY_ERASE)) == KEY_ERASE;
+        if (boosting && !was_boosting) fixfinder_play_sound(boost_sound, 1);
+        was_boosting = boosting;
         while ((int32_t)(now-step)>=0) {
             advance(state,keys);
             step+=16+(state->ticks&1U);

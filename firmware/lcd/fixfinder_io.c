@@ -24,6 +24,17 @@ static volatile uint32_t beep_remaining;
 static enum fixfinder_led active_led;
 static uint32_t tone_hz, tone_timer_hz;
 static bool tone_high;
+static volatile bool tone_noise;
+static uint16_t noise_lfsr = 0xace1;
+static const struct fixfinder_note *sound_note;
+static uint16_t sound_remaining;
+static unsigned int sound_priority;
+static void set_tone(uint32_t hz, bool noise);
+
+static void play_note(const struct fixfinder_note *note)
+{
+    set_tone(note->hz & ~FIXFINDER_NOTE_NOISE, (note->hz & FIXFINDER_NOTE_NOISE) != 0);
+}
 
 static void configure_output(uint32_t port, unsigned int pin, unsigned int high)
 {
@@ -68,17 +79,28 @@ void fixfinder_io_tick(void)
     if (beep_remaining != 0 && --beep_remaining == 0) {
         GPIO_BOP(GPIOF) = BEEPER_PIN << 16;
     }
+    if (sound_remaining && --sound_remaining == 0) {
+        ++sound_note;
+        sound_remaining = sound_note->ms;
+        play_note(sound_note);
+    }
 }
 
 void TIMER6_IRQHandler(void)
 {
     TIMER_INTF(TIMER6) = 0;
-    tone_high = !tone_high;
+    if (tone_noise) {
+        noise_lfsr = (noise_lfsr >> 1) ^ ((noise_lfsr & 1U) ? 0xb400U : 0U);
+        tone_high = (noise_lfsr & 1U) != 0;
+    } else {
+        tone_high = !tone_high;
+    }
     GPIO_BOP(GPIOF) = tone_high ? BEEPER_PIN : BEEPER_PIN << 16;
 }
 
-void fixfinder_tone(uint32_t hz)
+static void set_tone(uint32_t hz, bool noise)
 {
+    tone_noise = noise;
     if (hz == tone_hz) return;
 
     if (hz && !tone_timer_hz) {
@@ -119,6 +141,35 @@ void fixfinder_tone(uint32_t hz)
         GPIO_BOP(GPIOF) = BEEPER_PIN << 16;
     }
     tone_hz = hz;
+}
+
+void fixfinder_tone(uint32_t hz)
+{
+    set_tone(hz, false);
+}
+
+void fixfinder_play_sound(const struct fixfinder_note *notes, unsigned int priority)
+{
+    const uint32_t interrupt_mask = __get_PRIMASK();
+    __disable_irq();
+    if (!sound_remaining || priority >= sound_priority) {
+        sound_note = notes;
+        sound_remaining = notes->ms;
+        sound_priority = priority;
+        play_note(notes);
+    }
+    __set_PRIMASK(interrupt_mask);
+}
+
+void fixfinder_stop_sound(void)
+{
+    const uint32_t interrupt_mask = __get_PRIMASK();
+    __disable_irq();
+    sound_remaining = 0;
+    beep_remaining = 0;
+    fixfinder_tone(0);
+    GPIO_BOP(GPIOF) = BEEPER_PIN << 16;
+    __set_PRIMASK(interrupt_mask);
 }
 
 void fixfinder_set_led(enum fixfinder_led led)

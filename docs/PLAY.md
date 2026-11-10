@@ -25,7 +25,7 @@ The save files live on FAT32 eMMC and stay there during USB firmware updates. Th
 
 Hold Erase with Back or Enter to walk forward while turning. In the game menu, Erase and Down move the selection, Back and Enter adjust settings, and Erase + Down confirms. In the automap, Erase + Down toggles follow mode. DOOM starts in Hangar. Advance the results screen with Use to continue. The complete shareware build loads each next map from eMMC, which adds a brief pause.
 
-The green, yellow and red LEDs track health. The built-in beeper plays different pitch patterns for weapon fire, doors, pickups and damage.
+The green, yellow and red LEDs track health. The built-in beeper gives gunshots a burst of noise and a lower tail. The pistol, shotgun, chaingun, rocket launcher and energy weapons have different sounds. Doors, pickups and damage have their own cues.
 
 | Loading DOOM | Secret level E1M9 |
 | --- | --- |

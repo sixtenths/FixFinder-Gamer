@@ -121,6 +121,8 @@ static const uint8_t *preview_row(const void *frame,unsigned int y)
 
 bool fixfinder_dino_run(const volatile uint32_t *clock,unsigned int *score,bool resume)
 {
+    static const struct fixfinder_note jump_sound[] = {{510, 19}, {760, 26}, {1040, 24}, {0, 0}};
+    static const struct fixfinder_note land_sound[] = {{290, 19}, {0, 0}};
     uint8_t *frame=malloc(W*H);
     if (!frame) return false;
     uint8_t *shadow=malloc(W*(H-FIRST_MOVING_ROW));
@@ -143,13 +145,17 @@ bool fixfinder_dino_run(const volatile uint32_t *clock,unsigned int *score,bool 
         bool jump=keys!=(KEY_DOWN|KEY_BACK) && (keys || (doom_usb_input_buttons()&DOOM_BUTTON_FIRE));
         if (jump && !was_jump && !state.height) {
             state.velocity=2230;
-            fixfinder_beep(22);
+            fixfinder_play_sound(jump_sound, 1);
         }
         was_jump=jump;
         while ((int32_t)(now-step)>=0 && !crashed) {
+            bool airborne = state.height > 0;
             state.height+=state.velocity;
             if (state.height>0) state.velocity-=147;
-            else state.height=state.velocity=0;
+            else {
+                state.height=state.velocity=0;
+                if (airborne) fixfinder_play_sound(land_sound, 1);
+            }
             unsigned int speed=3+(state.tick<1500?state.tick/375:4);
             state.distance+=speed;
             state.cactus_x-=(int)speed;

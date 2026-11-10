@@ -85,6 +85,21 @@ static const struct {
 static const int dx[] = {1, 0, -1, 0};
 static const int dy[] = {0, 1, 0, -1};
 
+enum arcade_sound_priority { BOUNCE = 1, ACTION, RESULT };
+static const struct fixfinder_note win_sound[] = {{660, 50}, {880, 55}, {1320, 90}, {0, 0}};
+static const struct fixfinder_note lose_sound[] = {{495, 60}, {330, 70}, {220, 105}, {0, 0}};
+static const struct fixfinder_note snake_food[] = {{650, 20}, {980, 34}, {0, 0}};
+#ifndef FIXFINDER_PACMAN
+static const struct fixfinder_note maze_dot[] = {{790, 13}, {530, 15}, {0, 0}};
+static const struct fixfinder_note maze_power[] = {{450, 25}, {670, 32}, {1010, 62}, {0, 0}};
+static const struct fixfinder_note maze_ghost[] = {{1160, 28}, {760, 28}, {1390, 42}, {0, 0}};
+#endif
+static const struct fixfinder_note wall_sound[] = {{310, 16}, {0, 0}};
+static const struct fixfinder_note paddle_sound[] = {{555, 25}, {0, 0}};
+static const struct fixfinder_note brick_sound[] = {{820, 18}, {1050, 24}, {0, 0}};
+static const struct fixfinder_note point_sound[] = {{645, 36}, {940, 54}, {0, 0}};
+static const struct fixfinder_note miss_sound[] = {{290, 32}, {185, 68}, {0, 0}};
+
 static void box(uint8_t *frame, int x, int y, int width, int height, uint8_t color)
 {
     if (x < 0 || y < 0 || x + width > W || y + height > H) return;
@@ -272,6 +287,7 @@ static void hud(uint8_t *frame, enum game_id game, unsigned int score)
 
 static bool finish(uint8_t *frame, const volatile uint32_t *clock, bool won)
 {
+    fixfinder_play_sound(won ? win_sound : lose_sound, RESULT);
     fixfinder_set_led(won ? FIXFINDER_LED_GREEN : FIXFINDER_LED_RED);
     box(frame, 40, 55, 160, 49, PANEL);
     text(120, 59, won ? "You win" : "Game over", &ui_large, WHITE, PANEL, true);
@@ -282,7 +298,10 @@ static bool finish(uint8_t *frame, const volatile uint32_t *clock, bool won)
         uint32_t keys = fixfinder_keys(now);
         if (fixfinder_arcade_exit(keys, now)) return false;
         if (!keys) released = true;
-        if (released && keys == KEY_ENTER) return true;
+        if (released && keys == KEY_ENTER) {
+            fixfinder_stop_sound();
+            return true;
+        }
         present(frame);
         wait_until(clock, now + 35);
     }
@@ -331,6 +350,7 @@ static void snake(uint8_t *frame, const volatile uint32_t *clock, bool resume)
                 state.body[0] = cell;
                 if (grow && ++state.length == CELLS) { won = true; break; }
                 if (grow) {
+                    fixfinder_play_sound(snake_food, ACTION);
                     food_flash = now + 220;
                     do {
                         state.food = random_cell(&state.seed, CELLS);
@@ -416,7 +436,13 @@ static void maze(uint8_t *frame, const volatile uint32_t *clock, bool resume)
                 if (maze_open(state.x+dx[state.next], state.y+dy[state.next])) state.heading = state.next;
                 if (maze_open(state.x+dx[state.heading], state.y+dy[state.heading])) { state.x+=dx[state.heading]; state.y+=dy[state.heading]; }
                 if (state.dots[state.y][state.x] == '.' || state.dots[state.y][state.x] == 'o') {
-                    if (state.dots[state.y][state.x] == 'o') { power_until = now+5500; powered = true; }
+                    if (state.dots[state.y][state.x] == 'o') {
+                        power_until = now + 5500;
+                        powered = true;
+                        fixfinder_play_sound(maze_power, ACTION);
+                    } else {
+                        fixfinder_play_sound(maze_dot, BOUNCE);
+                    }
                     state.dots[state.y][state.x] = ' ';
                     --state.left; ++state.score;
                 }
@@ -435,9 +461,13 @@ static void maze(uint8_t *frame, const volatile uint32_t *clock, bool resume)
                 step = now+125;
             }
             for (int g=0; g<2; ++g) if (state.gx[g]==state.x && state.gy[g]==state.y) {
-                if (powered) { state.gx[g]=g?19:1; state.gy[g]=7; state.score+=10; }
+                if (powered) {
+                    state.gx[g]=g?19:1; state.gy[g]=7; state.score+=10;
+                    fixfinder_play_sound(maze_ghost, ACTION);
+                }
                 else if ((int32_t)(now-safe_until)>=0) {
                     --state.lives; state.x=10; state.y=11; safe_until=now+1400;
+                    if (state.lives) fixfinder_play_sound(miss_sound, RESULT);
                 }
             }
             fixfinder_set_led(state.lives <= 1 ? FIXFINDER_LED_RED :
@@ -498,21 +528,47 @@ static void paddle_game(uint8_t *frame, const volatile uint32_t *clock, bool bri
                 state.opponent = clamp(state.opponent + (state.y < state.opponent+10*P ? -2 : 2), 20*P, 117*P);
             }
             state.x += state.vx; state.y += state.vy;
-            if (state.y <= 20*P) { state.y=20*P; state.vy=2; }
-            if (!bricks && state.y >= 137*P) { state.y=137*P; state.vy=-2; }
+            if (state.y <= 20*P) {
+                state.y=20*P; state.vy=2;
+                fixfinder_play_sound(wall_sound, BOUNCE);
+            }
+            if (!bricks && state.y >= 137*P) {
+                state.y=137*P; state.vy=-2;
+                fixfinder_play_sound(wall_sound, BOUNCE);
+            }
             if (bricks) {
-                if (state.x <= 8*P || state.x >= 228*P) { state.x=clamp(state.x,8*P,228*P); state.vx=-state.vx; }
-                if (state.vy > 0 && state.y >= 130*P && state.y <= 135*P && state.x+4*P >= state.player && state.x < state.player+32*P) state.vy=-2;
-                if (state.y >= 141*P) { ++state.other; state.x=120*P; state.y=94*P; state.vy=-2; }
+                if (state.x <= 8*P || state.x >= 228*P) {
+                    state.x=clamp(state.x,8*P,228*P); state.vx=-state.vx;
+                    fixfinder_play_sound(wall_sound, BOUNCE);
+                }
+                if (state.vy > 0 && state.y >= 130*P && state.y <= 135*P && state.x+4*P >= state.player && state.x < state.player+32*P) {
+                    state.vy=-2;
+                    fixfinder_play_sound(paddle_sound, BOUNCE);
+                }
+                if (state.y >= 141*P) {
+                    ++state.other; state.x=120*P; state.y=94*P; state.vy=-2;
+                    if (state.other < 3) fixfinder_play_sound(miss_sound, RESULT);
+                }
                 if (state.y >= 30*P && state.y < 66*P && state.x >= 19*P && state.x < 219*P) {
                     int row=(state.y-30*P)/(9*P), col=(state.x-19*P)/(20*P);
-                    if (state.rows[row] & (1U << col)) { state.rows[row] ^= 1U << col; ++state.score; state.vy=-state.vy; }
+                    if (state.rows[row] & (1U << col)) {
+                        state.rows[row] ^= 1U << col; ++state.score; state.vy=-state.vy;
+                        fixfinder_play_sound(brick_sound, ACTION);
+                    }
                 }
             } else {
-                if (state.vx<0 && state.x<=17*P && state.x>=11*P && state.y+4*P>=state.player && state.y<state.player+23*P) state.vx=3;
-                if (state.vx>0 && state.x>=219*P && state.x<=225*P && state.y+4*P>=state.opponent && state.y<state.opponent+23*P) state.vx=-3;
+                if (state.vx<0 && state.x<=17*P && state.x>=11*P && state.y+4*P>=state.player && state.y<state.player+23*P) {
+                    state.vx=3;
+                    fixfinder_play_sound(paddle_sound, BOUNCE);
+                }
+                if (state.vx>0 && state.x>=219*P && state.x<=225*P && state.y+4*P>=state.opponent && state.y<state.opponent+23*P) {
+                    state.vx=-3;
+                    fixfinder_play_sound(paddle_sound, BOUNCE);
+                }
                 if (state.x<6*P || state.x>230*P) {
                     if (state.x<6*P) ++state.other; else ++state.score;
+                    if (state.other < 5 && state.score < 5)
+                        fixfinder_play_sound(state.x < 6*P ? miss_sound : point_sound, RESULT);
                     state.vx = state.x<6*P ? 3 : -3;
                     state.x=120*P; state.y=80*P;
                 }
@@ -856,6 +912,7 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                     break;
                 }
                 }
+                fixfinder_stop_sound();
                 keys=fixfinder_keys(*clock);
                 wait_for_release = keys != 0;
                 redraw = true;

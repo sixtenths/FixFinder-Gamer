@@ -56,51 +56,50 @@ static const struct v9_lcd_board *doom_board;
 bool doom_dcs_init(void);
 void doom_dcs_present(const uint8_t *frame);
 
-struct sound_step {
-    uint16_t hz, ms;
+enum sound_priority { AMBIENCE = 1, IMPACT, WEAPON, EXPLOSION, ALERT };
+
+/* Noise at the attack gives the shot a crack. The lower notes carry its
+ * body, and the gaps separate the reflections. */
+#define CRACK(hz, ms) { FIXFINDER_NOTE_NOISE | (hz), (ms) }
+static const struct fixfinder_note pistol[] = {
+    CRACK(2600, 7), {870, 4}, {325, 14}, {470, 6}, {231, 15}, {0, 7}, {178, 12}, {0, 0}
 };
-
-enum sound_priority { AMBIENCE = 1, WEAPON, IMPACT, ALERT };
-
-static const struct sound_step pistol[] = {{1050, 8}, {540, 11}, {270, 20}, {0, 0}};
-static const struct sound_step shotgun[] = {{1450, 6}, {390, 13}, {780, 7}, {205, 28}, {145, 20}, {0, 0}};
-static const struct sound_step cock[] = {{580, 12}, {0, 15}, {860, 11}, {340, 17}, {0, 0}};
-static const struct sound_step plasma[] = {{720, 9}, {1180, 10}, {1780, 14}, {0, 0}};
-static const struct sound_step rocket[] = {{285, 18}, {430, 23}, {650, 22}, {0, 0}};
-static const struct sound_step blast[] = {{980, 5}, {230, 24}, {365, 10}, {155, 46}, {0, 0}};
-static const struct sound_step pickup[] = {{880, 27}, {1320, 36}, {0, 0}};
-static const struct sound_step weapon[] = {{660, 25}, {990, 25}, {1480, 50}, {0, 0}};
-static const struct sound_step door_open[] = {{170, 27}, {220, 33}, {285, 40}, {0, 0}};
-static const struct sound_step door_close[] = {{285, 32}, {220, 28}, {165, 36}, {0, 0}};
-static const struct sound_step click[] = {{1050, 10}, {430, 22}, {0, 0}};
-static const struct sound_step pain[] = {{510, 23}, {320, 22}, {220, 34}, {0, 0}};
-static const struct sound_step death[] = {{545, 34}, {385, 44}, {240, 58}, {140, 75}, {0, 0}};
-
-static const struct sound_step *sound_step;
-static uint16_t sound_remaining;
-static enum sound_priority sound_priority;
-
-static void doom_sound_tick(void)
-{
-    if (sound_remaining && --sound_remaining == 0) {
-        ++sound_step;
-        sound_remaining = sound_step->ms;
-        fixfinder_tone(sound_step->hz);
-    }
-}
-
-static void doom_sound_start(const struct sound_step *steps, enum sound_priority priority)
-{
-    const uint32_t interrupt_mask = __get_PRIMASK();
-    __disable_irq();
-    if (!sound_remaining || priority >= sound_priority) {
-        sound_step = steps;
-        sound_remaining = steps->ms;
-        sound_priority = priority;
-        fixfinder_tone(steps->hz);
-    }
-    __set_PRIMASK(interrupt_mask);
-}
+static const struct fixfinder_note chaingun[] = {
+    CRACK(2200, 6), {690, 4}, {298, 14}, {214, 12}, {0, 0}
+};
+static const struct fixfinder_note shotgun[] = {
+    CRACK(3000, 9), {570, 4}, CRACK(1450, 5), {288, 17}, {403, 8},
+    {221, 23}, {0, 9}, {178, 18}, {0, 0}
+};
+static const struct fixfinder_note double_barrel[] = {
+    CRACK(3400, 9), {340, 9}, CRACK(2500, 10), {610, 5},
+    {258, 23}, {372, 10}, {194, 25}, {0, 9}, {155, 24}, {0, 0}
+};
+static const struct fixfinder_note rocket[] = {
+    CRACK(1700, 8), {660, 6}, {278, 14}, {360, 10}, {491, 13}, {630, 18}, {0, 0}
+};
+static const struct fixfinder_note plasma[] = {
+    {2080, 4}, CRACK(1800, 7), {1710, 6}, {705, 9}, {425, 12}, {0, 0}
+};
+static const struct fixfinder_note bfg[] = {
+    {270, 25}, {430, 20}, {710, 16}, {1130, 12}, CRACK(2800, 14),
+    {1410, 5}, {292, 22}, {186, 35}, {0, 0}
+};
+static const struct fixfinder_note blast[] = {
+    CRACK(1900, 12), {270, 21}, {356, 9}, {203, 24},
+    {0, 10}, {166, 32}, {0, 13}, {136, 22}, {0, 0}
+};
+#undef CRACK
+static const struct fixfinder_note punch[] = {{590, 5}, {275, 19}, {170, 13}, {0, 0}};
+static const struct fixfinder_note saw[] = {{415, 11}, {550, 14}, {320, 23}, {0, 0}};
+static const struct fixfinder_note cock[] = {{580, 12}, {0, 15}, {860, 11}, {340, 17}, {0, 0}};
+static const struct fixfinder_note pickup[] = {{880, 27}, {1320, 36}, {0, 0}};
+static const struct fixfinder_note weapon[] = {{660, 25}, {990, 25}, {1480, 50}, {0, 0}};
+static const struct fixfinder_note door_open[] = {{170, 27}, {220, 33}, {285, 40}, {0, 0}};
+static const struct fixfinder_note door_close[] = {{285, 32}, {220, 28}, {165, 36}, {0, 0}};
+static const struct fixfinder_note click[] = {{1050, 10}, {430, 22}, {0, 0}};
+static const struct fixfinder_note pain[] = {{510, 23}, {320, 22}, {220, 34}, {0, 0}};
+static const struct fixfinder_note death[] = {{545, 34}, {385, 44}, {240, 58}, {140, 75}, {0, 0}};
 #endif
 
 _Static_assert(SCREENWIDTH * sizeof(uint16_t) == DOOM_FRAME_WIDTH, "Doom pitch changed");
@@ -132,7 +131,6 @@ void SysTick_Handler(void)
 #endif
 #ifdef FIXFINDER_DOOM_DCS
     fixfinder_io_tick();
-    doom_sound_tick();
 #endif
 }
 
@@ -280,61 +278,75 @@ int I_StartSound(int id, int channel, int volume, int separation)
     if (volume > 0) {
         switch (id) {
         case sfx_pistol:
+            fixfinder_play_sound(pistol, WEAPON);
+            break;
         case sfx_chgun:
-            doom_sound_start(pistol, WEAPON);
+            fixfinder_play_sound(chaingun, WEAPON);
             break;
         case sfx_shotgn:
+            fixfinder_play_sound(shotgun, WEAPON);
+            break;
         case sfx_dshtgn:
-            doom_sound_start(shotgun, WEAPON);
+            fixfinder_play_sound(double_barrel, WEAPON);
+            break;
+        case sfx_punch:
+            fixfinder_play_sound(punch, WEAPON);
+            break;
+        case sfx_sawup:
+        case sfx_sawful:
+        case sfx_sawhit:
+            fixfinder_play_sound(saw, WEAPON);
             break;
         case sfx_sgcock:
         case sfx_dbopn:
         case sfx_dbcls:
         case sfx_dbload:
-            doom_sound_start(cock, AMBIENCE);
+            fixfinder_play_sound(cock, AMBIENCE);
             break;
         case sfx_rlaunc:
         case sfx_firsht:
-            doom_sound_start(rocket, WEAPON);
+            fixfinder_play_sound(rocket, WEAPON);
             break;
         case sfx_plasma:
+            fixfinder_play_sound(plasma, WEAPON);
+            break;
         case sfx_bfg:
-            doom_sound_start(plasma, WEAPON);
+            fixfinder_play_sound(bfg, WEAPON);
             break;
         case sfx_rxplod:
         case sfx_firxpl:
         case sfx_barexp:
-            doom_sound_start(blast, IMPACT);
+            fixfinder_play_sound(blast, EXPLOSION);
             break;
         case sfx_itemup:
-            doom_sound_start(pickup, AMBIENCE);
+            fixfinder_play_sound(pickup, AMBIENCE);
             break;
         case sfx_wpnup:
         case sfx_getpow:
-            doom_sound_start(weapon, IMPACT);
+            fixfinder_play_sound(weapon, IMPACT);
             break;
         case sfx_doropn:
         case sfx_bdopn:
         case sfx_pstart:
-            doom_sound_start(door_open, AMBIENCE);
+            fixfinder_play_sound(door_open, AMBIENCE);
             break;
         case sfx_dorcls:
         case sfx_bdcls:
         case sfx_pstop:
-            doom_sound_start(door_close, AMBIENCE);
+            fixfinder_play_sound(door_close, AMBIENCE);
             break;
         case sfx_swtchn:
         case sfx_swtchx:
         case sfx_oof:
         case sfx_noway:
-            doom_sound_start(click, AMBIENCE);
+            fixfinder_play_sound(click, AMBIENCE);
             break;
         case sfx_plpain:
-            doom_sound_start(pain, IMPACT);
+            fixfinder_play_sound(pain, IMPACT);
             break;
         case sfx_pldeth:
         case sfx_pdiehi:
-            doom_sound_start(death, ALERT);
+            fixfinder_play_sound(death, ALERT);
             break;
         }
     }
