@@ -6,13 +6,23 @@
 #include "jpeg/tjpgd.h"
 #include <string.h>
 
-enum { START = 1, TILE, DATA, STOP, PING, BATCH };
+enum { START = 1, TILE, DATA, STOP, PING, BATCH, MOTION };
 enum { RAW, RUNS, INDEXED, MONO, FOUR_COLORS, LZNT1, PATCH };
 enum { TILE_W = 40, TILE_H = 20, PIXELS = TILE_W * TILE_H,
        COLUMNS = DOOM_LCD_WIDTH / TILE_W, ROWS = DOOM_LCD_HEIGHT / TILE_H };
 enum { JPEG_BATCH = 0x8000, JPEG_CAPACITY = 24 * 1024, JPEG_WORK = 10 * 1024 };
+enum { MOTION_BATCH = 0x4000, MOTION_WIDTH = 240, MOTION_HEIGHT = 180, BLOCK_W = 8, BLOCK_H = 12,
+       BLOCK_BYTES = 8 + BLOCK_W * BLOCK_H / 4, MOTION_COLUMNS = MOTION_WIDTH / BLOCK_W,
+       MOTION_PAYLOAD = MOTION_COLUMNS * (MOTION_HEIGHT / BLOCK_H) * BLOCK_BYTES,
+       MOTION_PACKET = MOTION_PAYLOAD + 2 };
 _Static_assert(JPEG_CAPACITY + JPEG_WORK <= DOOM_FRAME_WIDTH * DOOM_FRAME_HEIGHT,
                "Desktop JPEG must fit the paused arcade framebuffer");
+_Static_assert(2 * MOTION_PACKET <= DOOM_FRAME_WIDTH * DOOM_FRAME_HEIGHT,
+               "Motion reports must fit the frame buffers");
+_Static_assert(MOTION_WIDTH * 4 == DOOM_LCD_WIDTH * 3 &&
+               MOTION_HEIGHT * 4 == DOOM_LCD_HEIGHT * 3 &&
+               MOTION_WIDTH % BLOCK_W == 0 && MOTION_HEIGHT % BLOCK_H == 0,
+               "Motion blocks must scale to the full panel");
 
 struct jpeg_frame {
     uint8_t *data;
@@ -27,6 +37,16 @@ static volatile uint8_t request;
 static uint8_t tile, encoding;
 static uint16_t expected, received, sequence;
 static bool invalid;
+static uint8_t *motion_buffers;
+static volatile bool motion_ready[2];
+static volatile uint8_t motion_write, motion_read;
+static unsigned int motion_offset;
+static uint16_t motion_pixels[4 * DOOM_LCD_WIDTH];
+
+static bool motion_busy(void)
+{
+    return motion_ready[0] || motion_ready[1];
+}
 
 static uint16_t le16(const uint8_t *bytes)
 {
@@ -42,6 +62,9 @@ void desktop_usb_reset(void)
 {
     running = reply_pending = tile_ready = batch_ready = batch_receiving = false;
     request = 0;
+    motion_ready[0] = motion_ready[1] = false;
+    motion_write = motion_read = 0;
+    motion_offset = 0;
 }
 
 bool desktop_usb_sent(void)
@@ -60,7 +83,7 @@ void desktop_usb_receive(const uint8_t *packet)
 
     if (op == STOP || op == PING) {
         request = op;
-    } else if (batch_receiving || batch_ready) {
+    } else if (batch_receiving || batch_ready || motion_busy()) {
         return;
     } else if (op == BATCH && !tile_ready && !expected) {
         unsigned int size = le16(packet + 4);
@@ -100,8 +123,33 @@ uint8_t *desktop_usb_batch_buffer(void)
 
 void desktop_usb_batch_received(void)
 {
-    batch_ready = running && batch_receiving;
+    bool accept = running && batch_receiving;
     batch_receiving = false;
+    if (!accept) return;
+    const uint8_t *data = doom_usb_video_scratch();
+    unsigned int length = le16(data + 3);
+    if (!(length & MOTION_BATCH)) {
+        batch_ready = !motion_busy();
+        return;
+    }
+    length &= ~MOTION_BATCH;
+    if (data[0] != DESKTOP_BATCH_ID || length <= 7 || length > DESKTOP_BATCH_SIZE ||
+        motion_ready[motion_write]) return;
+    unsigned int offset = le16(data + 5), count = length - 7;
+    if (offset >= MOTION_PAYLOAD || count > MOTION_PAYLOAD - offset) return;
+    uint8_t *frame = motion_buffers + motion_write * MOTION_PACKET;
+    if (!offset) {
+        motion_offset = 0;
+        memcpy(frame, data + 1, 2);
+    }
+    if (offset != motion_offset || le16(frame) != le16(data + 1)) return;
+    memcpy(frame + 2 + offset, data + 7, count);
+    motion_offset += count;
+    if (motion_offset == MOTION_PAYLOAD) {
+        motion_ready[motion_write] = true;
+        motion_write ^= 1;
+        motion_offset = 0;
+    }
 }
 
 /* A tile fits in one LZNT1 chunk. Decode directly into the RGB565 buffer. */
@@ -180,6 +228,37 @@ static void draw_tile(unsigned int index)
                             TILE_W, TILE_H, pixels);
 }
 
+static void draw_motion(const uint8_t *frame)
+{
+    doom_dcs_video_timing(true);
+    unsigned int panel_y = 0;
+    for (unsigned int y = 0; y < MOTION_HEIGHT; ++y) {
+        uint16_t *row = motion_pixels + (y & 1U) * 2 * DOOM_LCD_WIDTH;
+        uint16_t *dest = row;
+        const uint8_t *block = frame + y / BLOCK_H * MOTION_COLUMNS * BLOCK_BYTES;
+        unsigned int phase = 0;
+        for (unsigned int i = 0; i < MOTION_COLUMNS; ++i, block += BLOCK_BYTES) {
+            uint16_t palette[4];
+            memcpy(palette, block, sizeof palette);
+            unsigned int bits = le16(block + sizeof palette + y % BLOCK_H * 2);
+            for (unsigned int x = 0; x < BLOCK_W; ++x) {
+                uint16_t color = palette[bits & 3U];
+                *dest++ = color;
+                if (phase == 1) *dest++ = color;
+                if (++phase == 3) phase = 0;
+                bits >>= 2;
+            }
+        }
+        unsigned int rows = 1 + (y % 3 == 1);
+        if (rows == 2) memcpy(row + DOOM_LCD_WIDTH, row, DOOM_LCD_WIDTH * sizeof *row);
+        doom_dcs_finish_video_rect();
+        doom_dcs_stream_video_rect(0, panel_y, DOOM_LCD_WIDTH, rows, row);
+        panel_y += rows;
+    }
+    doom_dcs_finish_video_rect();
+    doom_dcs_video_timing(false);
+}
+
 static size_t jpeg_read(JDEC *decoder, uint8_t *dest, size_t requested)
 {
     struct jpeg_frame *frame = decoder->device;
@@ -193,26 +272,26 @@ static size_t jpeg_read(JDEC *decoder, uint8_t *dest, size_t requested)
 static int jpeg_draw(JDEC *decoder, void *pixels_rgb565, JRECT *rect)
 {
     unsigned int width = rect->right - rect->left + 1;
-    unsigned int height = rect->bottom - rect->top + 1;
-    if (decoder->width == DOOM_LCD_WIDTH) {
-        doom_dcs_write_rgb_rect(rect->left, rect->top, width, height, pixels_rgb565);
-        return 1;
-    }
-
-    /* The assembled JPEG and its decoder are in the arcade frame buffer. The
-       USB batch scratch is free until we acknowledge this frame. */
+    unsigned int left = (rect->left * DOOM_LCD_WIDTH + decoder->width / 2) / decoder->width;
+    unsigned int right = ((rect->right + 1) * DOOM_LCD_WIDTH + decoder->width / 2) / decoder->width;
+    unsigned int top = (rect->top * DOOM_LCD_HEIGHT + decoder->height / 2) / decoder->height;
+    unsigned int bottom = ((rect->bottom + 1) * DOOM_LCD_HEIGHT + decoder->height / 2) / decoder->height;
     const uint16_t *source = pixels_rgb565;
+    /* Decode the next block while DMA sends the preceding one. The USB batch
+       buffer is free for the wire pixels until this video frame is acknowledged. */
+    doom_dcs_finish_video_rect();
     uint16_t *scaled = (uint16_t *)doom_usb_video_scratch();
-    unsigned int stride = 2 * width;
-    for (unsigned int y = 0; y < height; ++y) {
-        uint16_t *row = scaled + 2 * y * stride;
-        for (unsigned int x = 0; x < width; ++x) {
-            uint16_t pixel = *source++;
-            row[2 * x] = row[2 * x + 1] = pixel;
-        }
-        memcpy(row + stride, row, stride * sizeof *row);
+    uint8_t columns[32];
+    unsigned int stride = right - left;
+    for (unsigned int x = 0; x < stride; ++x)
+        columns[x] = ((2 * (left + x) + 1) * decoder->width) / (2 * DOOM_LCD_WIDTH) - rect->left;
+    for (unsigned int y = top; y < bottom; ++y) {
+        unsigned int src_y = ((2 * y + 1) * decoder->height) / (2 * DOOM_LCD_HEIGHT) - rect->top;
+        const uint16_t *row = source + src_y * width;
+        for (unsigned int x = 0; x < stride; ++x)
+            scaled[(y - top) * stride + x] = (uint16_t)__REV16(row[columns[x]]);
     }
-    doom_dcs_write_rgb_rect(2 * rect->left, 2 * rect->top, stride, 2 * height, scaled);
+    doom_dcs_stream_video_rect(left, top, stride, bottom - top, scaled);
     return 1;
 }
 
@@ -236,7 +315,13 @@ static bool draw_jpeg_chunk(struct jpeg_frame *frame, const uint8_t *data, unsig
         return false;
     bool native = decoder.width == DOOM_LCD_WIDTH && decoder.height == DOOM_LCD_HEIGHT;
     bool half = decoder.width == DOOM_LCD_WIDTH / 2 && decoder.height == DOOM_LCD_HEIGHT / 2;
-    return (native || half) && jd_decomp(&decoder, jpeg_draw, 0) == JDR_OK;
+    bool sharp = decoder.width == 240 && decoder.height == 180;
+    if (!native && !half && !sharp) return false;
+    doom_dcs_video_timing(true);
+    bool ok = jd_decomp(&decoder, jpeg_draw, 0) == JDR_OK;
+    doom_dcs_finish_video_rect();
+    doom_dcs_video_timing(false);
+    return ok;
 }
 
 static bool draw_batch(const uint8_t *data, struct jpeg_frame *jpeg)
@@ -282,6 +367,8 @@ static void acknowledge(uint8_t op, uint8_t status, uint16_t token)
     reply[5] = op == START ? 1 : 0;  /* Feature-report batching capability. */
     reply[6] = op == START ? 1 : 0;  /* Compressed rectangles and short batches. */
     reply[7] = op == START ? 1 : 0;  /* Full-frame JPEG video mode. */
+    reply[8] = op == START ? 1 : 0;  /* Sharper 240 x 180 video frames. */
+    reply[9] = op == START ? 1 : 0;  /* Pipelined block-palette motion frames. */
     reply_pending = true;
     custom_hid_report_send(&custom_hid, reply, sizeof reply);
 }
@@ -295,6 +382,10 @@ bool fixfinder_desktop_run(const volatile uint32_t *clock, uint8_t *frame)
         return false;
     }
     doom_usb_video_reset();
+    motion_buffers = frame;
+    motion_ready[0] = motion_ready[1] = false;
+    motion_write = motion_read = 0;
+    motion_offset = 0;
     running = true;
     request = 0;
     __set_PRIMASK(irq);
@@ -315,7 +406,19 @@ bool fixfinder_desktop_run(const volatile uint32_t *clock, uint8_t *frame)
         if (!back) back_released = true;
         if ((back && back_released) || now - last_activity >= 5000U) break;
 
-        if (!reply_pending && batch_ready) {
+        if (!reply_pending && motion_ready[motion_read]) {
+            const uint8_t *data = motion_buffers + motion_read * MOTION_PACKET;
+            uint16_t token = le16(data);
+            draw_motion(data + 2);
+            __disable_irq();
+            if (running) {
+                motion_ready[motion_read] = false;
+                motion_read ^= 1;
+                acknowledge(MOTION, 0, token);
+            }
+            __set_PRIMASK(irq);
+            last_activity = now;
+        } else if (!reply_pending && batch_ready) {
             const uint8_t *data = doom_usb_video_scratch();
             uint16_t token = le16(data + 1);
             bool valid = draw_batch(data, &jpeg);
@@ -353,6 +456,7 @@ bool fixfinder_desktop_run(const volatile uint32_t *clock, uint8_t *frame)
     }
     __disable_irq();
     running = tile_ready = batch_ready = batch_receiving = false;
+    motion_ready[0] = motion_ready[1] = false;
     request = 0;
     expected = 0;
     __set_PRIMASK(irq);

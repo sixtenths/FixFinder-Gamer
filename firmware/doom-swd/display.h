@@ -22,6 +22,10 @@ void doom_dcs_write_rgb_rect(unsigned int x, unsigned int y, unsigned int width,
                              unsigned int height, const uint16_t *pixels);
 void doom_dcs_stream_native_row(unsigned int row, const uint8_t *indices);
 void doom_dcs_finish_native_stream(void);
+void doom_dcs_video_timing(bool fast);
+void doom_dcs_stream_video_rect(unsigned int x, unsigned int y, unsigned int width,
+                                 unsigned int height, const uint16_t *wire_pixels);
+void doom_dcs_finish_video_rect(void);
 void doom_dcs_begin_native_span(unsigned int x, unsigned int width);
 void doom_dcs_write_native_span(unsigned int row, const uint8_t *indices,
                                 unsigned int x, unsigned int width);

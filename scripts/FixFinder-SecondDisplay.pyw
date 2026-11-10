@@ -15,8 +15,9 @@ from fixfinder_desktop_windows import Capture, HEIGHT, WIDTH, TileCompressor, dp
 from fixfinder_image import DESKTOP_PID, VID
 
 REPORT_ID, REPORT_SIZE = 0x17, 64
-START, TILE, DATA, STOP, PING, BATCH = range(1, 7)
+START, TILE, DATA, STOP, PING, BATCH, MOTION = range(1, 8)
 BATCH_ID, BATCH_SIZE = 0x18, 4096
+MOTION_BATCH, MOTION_PAYLOAD = 0x4000, 14400
 JPEG_BATCH, JPEG_CAPACITY = 0x8000, 24 * 1024
 TILE_W, TILE_H = 40, 20
 TILE_COLS, TILE_ROWS = WIDTH // TILE_W, HEIGHT // TILE_H
@@ -113,6 +114,9 @@ class DisplayLink:
         self.batched = False
         self.rectangles = False
         self.jpeg = False
+        self.sharp_video = False
+        self.motion = False
+        self.motion_token = None
         self.compressor = None
 
     def send(self, operation, payload=b""):
@@ -143,6 +147,8 @@ class DisplayLink:
         self.batched = reply[5] == 1
         self.rectangles = self.batched and reply[6] == 1
         self.jpeg = self.batched and reply[7] == 1
+        self.sharp_video = self.jpeg and reply[8] == 1
+        self.motion = self.jpeg and reply[9] == 1
         if self.rectangles:
             self.compressor = TileCompressor(TILE_BYTES)
 
@@ -195,6 +201,7 @@ class DisplayLink:
         return not stop.is_set()
 
     def send_batch(self, batch, flags=0):
+        self.flush_motion()
         self.token = (self.token + 1) & 0xffff
         struct.pack_into("<BHH", batch, 0, BATCH_ID, self.token, len(batch) | flags)
         if self.rectangles and not flags and len(batch) < REPORT_SIZE:
@@ -214,11 +221,33 @@ class DisplayLink:
             self.send_batch(batch, JPEG_BATCH)
         return True
 
+    def motion_frame(self, data):
+        if len(data) != MOTION_PAYLOAD:
+            raise ValueError("Unexpected motion frame size.")
+        self.token = (self.token + 1) & 0xffff
+        chunk_size = BATCH_SIZE - 7
+        for offset in range(0, len(data), chunk_size):
+            part = data[offset:offset + chunk_size]
+            report = struct.pack("<BHHH", BATCH_ID, self.token, (len(part) + 7) | MOTION_BATCH, offset) + part
+            self.device.write_feature(report.ljust(BATCH_SIZE, b"\0"))
+        self.flush_motion()
+        self.motion_token = self.token
+
+    def flush_motion(self):
+        if self.motion_token is not None:
+            token, self.motion_token = self.motion_token, None
+            self.receive(MOTION, token)
+
     def ping(self):
+        self.flush_motion()
         self.send(PING)
         self.receive(PING)
 
     def close(self):
+        try:
+            self.flush_motion()
+        except OSError:
+            pass
         try:
             # Also clears a pending START when the scanner was in a game.
             self.send(STOP)
@@ -231,16 +260,20 @@ class DisplayLink:
 
 
 class VideoEncoder:
-    def __init__(self):
+    def __init__(self, sharp=True):
         try:
-            from PIL import Image
+            from PIL import Image, ImageFilter
         except ImportError as error:
             raise OSError("Video mode needs Pillow. Install it with python -m pip install Pillow.") from error
         self.image = Image
+        self.size = (240, 180) if sharp else (WIDTH // 2, HEIGHT // 2)
+        self.sharpen = ImageFilter.UnsharpMask(radius=.65, percent=100, threshold=3) if sharp else None
 
     def __call__(self, frame):
         image = self.image.frombytes("RGB", (WIDTH, HEIGHT), frame, "raw", "BGR;16")
-        image = image.resize((WIDTH // 2, HEIGHT // 2), self.image.Resampling.BOX)
+        image = image.resize(self.size, self.image.Resampling.LANCZOS if self.sharpen else self.image.Resampling.BOX)
+        if self.sharpen:
+            image = image.filter(self.sharpen)
         for quality in (72, 55, 40, 25):
             with BytesIO() as buffer:
                 image.save(buffer, "JPEG", quality=quality, subsampling=2)
@@ -250,13 +283,55 @@ class VideoEncoder:
         return data if len(data) <= JPEG_CAPACITY else None
 
 
+class MotionEncoder:
+    """Keep each source pixel's position with four local colors per 8 by 12 block."""
+    def __init__(self):
+        import numpy as np
+        from PIL import Image
+        self.np, self.image = np, Image
+
+    def __call__(self, frame):
+        np = self.np
+        image = self.image.frombytes("RGB", (WIDTH, HEIGHT), frame, "raw", "BGR;16")
+        image = image.resize((240, 180), self.image.Resampling.LANCZOS)
+        blocks = np.asarray(image).reshape(15, 12, 30, 8, 3)
+        blocks = blocks.transpose(0, 2, 1, 3, 4).reshape(-1, 96, 3).astype(np.float32)
+        luma = blocks @ np.array((.299, .587, .114), dtype=np.float32)
+        low, high = luma.min(axis=1), luma.max(axis=1)
+        positions = np.array((0, 1 / 3, 2 / 3, 1), dtype=np.float32)
+        target = low[:, None] + (high - low)[:, None] * positions
+        anchors = np.abs(luma[:, :, None] - target[:, None, :]).argmin(axis=1)
+        palette = np.take_along_axis(blocks, anchors[:, :, None], axis=1)
+        delta = blocks[:, :, None, :] - palette[:, None, :, :]
+        nearest = np.einsum("...c,...c->...", delta, delta).argmin(axis=2)
+        for color in range(4):
+            matches = nearest == color
+            count = matches.sum(axis=1)[:, None]
+            total = np.einsum("bp,bpc->bc", matches, blocks)
+            np.divide(total, count, out=palette[:, color], where=count != 0)
+        red, green, blue = palette.round().astype(np.uint16).transpose(2, 0, 1)
+        rgb565 = ((red >> 3) << 11) | ((green >> 2) << 5) | (blue >> 3)
+        packed = nearest.astype(np.uint8).reshape(-1, 24, 4)
+        indices = packed[:, :, 0] | (packed[:, :, 1] << 2) | (packed[:, :, 2] << 4) | (packed[:, :, 3] << 6)
+        result = np.empty((len(blocks), 32), dtype=np.uint8)
+        result[:, :8] = rgb565.astype(">u2").view(np.uint8)
+        result[:, 8:] = indices
+        return result.tobytes()
+
+
 def stream(source, cursor, serial, stop, notify, video=False):
     link = DisplayLink(serial)
     try:
         link.start()
         if video and not link.jpeg:
             raise OSError("Update the scanner's arcade firmware to use Video mode.")
-        encoder = VideoEncoder() if video else None
+        motion = None
+        if video and link.motion:
+            try:
+                motion = MotionEncoder()
+            except ImportError:
+                pass
+        encoder = VideoEncoder(link.sharp_video) if video and motion is None else None
         notify(f"Connected to {link.serial}  |  Sending first frame…")
         capture = Capture(source, cursor=cursor)
         try:
@@ -282,8 +357,12 @@ def stream(source, cursor, serial, stop, notify, video=False):
                 if changes:
                     if len(changes) >= 24:
                         last_motion = now
-                    jpeg = encoder(rgb) if encoder and now - last_motion < .3 else None
-                    if jpeg is not None:
+                    moving = now - last_motion < .3
+                    jpeg = encoder(rgb) if encoder and moving else None
+                    if motion and moving:
+                        link.motion_frame(motion(rgb))
+                        video_active = True
+                    elif jpeg is not None:
                         if not link.video_frame(jpeg, stop):
                             break
                         video_active = True

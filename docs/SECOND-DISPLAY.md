@@ -35,6 +35,6 @@ If exactly one secondary virtual monitor is active, launch the app with `--conne
 
 ## Smoother video
 
-Install Pillow with `python -m pip install Pillow`, then select **Video mode (smoother motion)** before connecting. During broad motion the app sends 160 × 120 JPEG frames, and the scanner scales them up to fill the panel. The app restores the regular 320 × 240 RGB565 image when motion settles. Windows keeps the selected desktop size. Use `--video` to start with this option selected.
+Install Pillow and NumPy with `python -m pip install Pillow numpy`, then select **Video mode (smoother motion)** before connecting. With the updated firmware, the app sends 240 × 180 frames with four local colors per 8 × 12 block. It can upload a frame while the scanner draws the preceding one. The lower color precision can show banding in moving gradients. The app restores the regular 320 × 240 RGB565 image when motion settles. Windows keeps the selected desktop size. Use `--video` to start with this option selected.
 
-The firmware uses TJpgDec R0.03 for JPEG decoding. The decoder source is mirrored from LVGL's copy, with RGB565 output and fast Huffman decoding enabled. [TJpgDec project and license](https://elm-chan.org/fsw/tjpgd/) · [Pinned source mirror](https://github.com/lvgl/lv_lib_split_jpg/tree/c292bfd196fdae251069efb5f1c2f0c1040d764f)
+The app uses JPEG for motion on earlier firmware or if NumPy is unavailable. The firmware uses TJpgDec R0.03 with RGB565 output and fast Huffman decoding enabled. [TJpgDec project and license](https://elm-chan.org/fsw/tjpgd/) · [Pinned source mirror](https://github.com/lvgl/lv_lib_split_jpg/tree/c292bfd196fdae251069efb5f1c2f0c1040d764f)

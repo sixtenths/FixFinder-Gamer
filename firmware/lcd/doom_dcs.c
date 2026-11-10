@@ -129,6 +129,10 @@ void doom_dcs_write_rgb_rect(unsigned int x, unsigned int y, unsigned int width,
  * byte writes to the panel's data register, high byte first. */
 static uint16_t dma_row[DOOM_LCD_WIDTH] __attribute__((aligned(4)));
 static bool dma_initialized, dma_pending, dma_failed;
+static struct {
+    unsigned int x, y, width, height;
+    const uint16_t *pixels;
+} video_rect;
 
 void doom_dcs_finish_native_stream(void)
 {
@@ -148,6 +152,25 @@ void doom_dcs_finish_native_stream(void)
     dma_pending = false;
 }
 
+static void start_lcd_dma(const uint16_t *source, unsigned int count)
+{
+    if (!dma_initialized) {
+        RCU_AHB1EN |= RCU_AHB1EN_DMA1EN;
+        (void)RCU_AHB1EN;
+        DMA_CH0CTL(DMA1) = DMA_MEMORY_TO_MEMORY | DMA_CHXCTL_PNAGA;
+        DMA_CH0FCTL(DMA1) = DMA_CHXFCTL_MDMEN;
+        DMA_CH0M0ADDR(DMA1) = (uintptr_t)&LCD_DATA;
+        dma_initialized = true;
+    }
+    DMA_CH0PADDR(DMA1) = (uintptr_t)source;
+    DMA_INTC0(DMA1) = DMA_INTC_FEEIFC | DMA_INTC_SDEIFC | DMA_INTC_TAEIFC |
+                     DMA_INTC_HTFIFC | DMA_INTC_FTFIFC;
+    DMA_CH0CNT(DMA1) = count * sizeof *source;
+    __DMB();
+    DMA_CH0CTL(DMA1) |= DMA_CHXCTL_CHEN;
+    dma_pending = true;
+}
+
 void doom_dcs_stream_native_row(unsigned int row, const uint8_t *indices)
 {
     bool was_pending = dma_pending;
@@ -157,22 +180,59 @@ void doom_dcs_stream_native_row(unsigned int row, const uint8_t *indices)
         doom_dcs_write_native(row, indices);
         return;
     }
-    if (!dma_initialized) {
-        RCU_AHB1EN |= RCU_AHB1EN_DMA1EN;
-        (void)RCU_AHB1EN;
-        DMA_CH0CTL(DMA1) = DMA_MEMORY_TO_MEMORY | DMA_CHXCTL_PNAGA;
-        DMA_CH0FCTL(DMA1) = DMA_CHXFCTL_MDMEN;
-        DMA_CH0PADDR(DMA1) = (uintptr_t)dma_row;
-        DMA_CH0M0ADDR(DMA1) = (uintptr_t)&LCD_DATA;
-        dma_initialized = true;
-    }
     const uint16_t *pixels = doom_display_native_row(indices);
     for (unsigned int x = 0; x < DOOM_LCD_WIDTH; ++x)
         dma_row[x] = (uint16_t)__REV16(pixels[x]);
-    DMA_INTC0(DMA1) = DMA_INTC_FEEIFC | DMA_INTC_SDEIFC | DMA_INTC_TAEIFC |
-                     DMA_INTC_HTFIFC | DMA_INTC_FTFIFC;
-    DMA_CH0CNT(DMA1) = sizeof dma_row;
-    __DMB();
-    DMA_CH0CTL(DMA1) |= DMA_CHXCTL_CHEN;
-    dma_pending = true;
+    start_lcd_dma(dma_row, DOOM_LCD_WIDTH);
+}
+
+void doom_dcs_video_timing(bool fast)
+{
+    __DSB();
+    /* Match the factory write phase during the video transfer. */
+    EXMC_SNWTCFG2 = fast ? 0x00000615U : 0x00000b15U;
+    __DSB();
+}
+
+static void write_wire_pixels(const uint16_t *pixels, unsigned int count)
+{
+    if (ordered_pixels) {
+        for (unsigned int i = 0; i < count; ++i) {
+            LCD_DATA = (uint8_t)pixels[i];
+            LCD_DATA = (uint8_t)(pixels[i] >> 8);
+        }
+        __DSB();
+    } else {
+        for (unsigned int i = 0; i < count; ++i) {
+            write_data((uint8_t)pixels[i]);
+            write_data((uint8_t)(pixels[i] >> 8));
+        }
+    }
+}
+
+void doom_dcs_stream_video_rect(unsigned int x, unsigned int y, unsigned int width,
+                                 unsigned int height, const uint16_t *wire_pixels)
+{
+    begin_panel_window(x, y, width, height);
+    if (dma_failed) {
+        write_wire_pixels(wire_pixels, width * height);
+        return;
+    }
+    video_rect.x = x;
+    video_rect.y = y;
+    video_rect.width = width;
+    video_rect.height = height;
+    video_rect.pixels = wire_pixels;
+    start_lcd_dma(wire_pixels, width * height);
+}
+
+void doom_dcs_finish_video_rect(void)
+{
+    if (!video_rect.pixels) return;
+    doom_dcs_finish_native_stream();
+    if (dma_failed) {
+        begin_panel_window(video_rect.x, video_rect.y, video_rect.width, video_rect.height);
+        write_wire_pixels(video_rect.pixels, video_rect.width * video_rect.height);
+    }
+    video_rect.pixels = NULL;
 }
