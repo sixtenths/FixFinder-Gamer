@@ -41,6 +41,7 @@ You can do the conversion with one compatible scanner. The build tools and DOOM 
 | [Installation](docs/SETUP.md) | One-scanner decision guide, equipment costs, build steps, and USB troubleshooting |
 | [Play and stream](docs/PLAY.md) | Scanner and keyboard controls, LED behavior, and viewer options |
 | [Development](docs/DEVELOPMENT.md) | Source layout, custom games, and tests |
+| [Console ports](docs/CONSOLE-PORTS.md) | Genesis Sonic and the Super Mario 64 renderer |
 | [Recovery](docs/RECOVERY.md) | J5 photos, read-only factory flash checks, loader installation, and V8 recovery limits |
 | [Hardware notes](docs/STATUS.md) | LCD bring-up, board measurements, and hardware verification |
 | [Archive](archive) | Earlier USB builds and display experiments |

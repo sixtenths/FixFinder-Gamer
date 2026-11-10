@@ -2,6 +2,9 @@
 param(
     [string]$ToolchainBin = "$env:LOCALAPPDATA/FixFinder/ArmGCC/bin",
     [string[]]$GameSource,
+    [string[]]$GameInclude,
+    [ValidateRange(0, 148)]
+    [int]$GameHeapKiB = 148,
     [switch]$GameSdk,
     [switch]$ArcadeOnly,
     [switch]$SaveFiles,
@@ -14,6 +17,10 @@ $ErrorActionPreference = 'Stop'
 $buildGame = $GameSource -or $ArcadeOnly
 if ($ArcadeOnly -and ($GameSource -or $GameSdk)) { throw '-ArcadeOnly selects its own game sources.' }
 if ($SaveFiles -and !$ArcadeOnly) { throw '-SaveFiles requires -ArcadeOnly.' }
+if (($GameInclude -or $GameHeapKiB -ne 148) -and !$GameSource) {
+    throw 'Custom include paths and heap limits require -GameSource.'
+}
+if ($GameInclude) { $GameInclude = @($GameInclude | ForEach-Object { (Resolve-Path -LiteralPath $_).Path }) }
 if ($GameSdk -and !$GameSource) { throw '-GameSdk requires -GameSource.' }
 if ($RamTest -and $buildGame) { throw '-RamTest applies to the resident loader.' }
 if ($RadioUart -and $buildGame) { throw '-RadioUart applies to the resident loader.' }
@@ -37,7 +44,7 @@ function Compile([string]$Source, [string]$Name, [string[]]$Defines) {
 function Export-Image([string]$Name, [string]$Linker, [string[]]$Layout, [string[]]$Objects) {
     $elf = Join-Path $work "$Name.elf"
     Invoke-Gcc ($Layout + @('-nostartfiles', '-T', $Linker,
-        '-Wl,--gc-sections', '-o', $elf) + $Objects)
+        '-Wl,--gc-sections', '-o', $elf) + $Objects + '-lm')
     & (Join-Path $toolchain 'arm-none-eabi-objcopy.exe') -O binary $elf (Join-Path $work "$Name.bin")
     if ($LASTEXITCODE) { throw "Could not export $Name.bin." }
 }
@@ -87,10 +94,15 @@ try {
                 $objects += Compile "firmware/doom-swd/$game.c" $game ($defines + '-O2')
             }
         }
+        $gameDefines = $defines + @($GameInclude | ForEach-Object { "-I$_" })
         for ($i = 0; $i -lt $GameSource.Count; ++$i) {
-            $objects += Compile $GameSource[$i] "game-$i" $defines
+            $objects += Compile $GameSource[$i] "game-$i" $gameDefines
         }
         $layout = @('-Wl,--defsym,__fixfinder_app_base=0x08008000')
+        if ($GameInclude) { $layout += '--specs=nosys.specs' }
+        if ($GameHeapKiB -ne 148) {
+            $layout += "-Wl,--defsym,__fixfinder_minimum_heap=$($GameHeapKiB * 1024)"
+        }
         $name = if ($ArcadeOnly) { 'FixFinder-Arcade' } else { 'FixFinder-Game' }
         Export-Image $name 'firmware/doom-swd/firmware.ld' $layout $objects
     } else {

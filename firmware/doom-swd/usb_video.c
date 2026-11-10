@@ -257,6 +257,11 @@ bool doom_usb_video_native_requested(void)
     return state == REQUESTED && is_lcd_band(requested_command);
 }
 
+bool doom_usb_video_preview_requested(void)
+{
+    return state == REQUESTED && !is_lcd_band(requested_command);
+}
+
 void doom_usb_video_native_begin(const uint8_t *palette)
 {
     native_capture = begin_capture(palette, true) != 0;

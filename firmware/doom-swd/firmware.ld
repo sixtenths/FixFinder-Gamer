@@ -13,7 +13,11 @@ __heap_end = _sp - 12K;
 SECTIONS {
     .vectors : { KEEP(*(.vectors)) KEEP(*(.isr_vector)) } > FLASH
     .text : { *(.text*) *(.rodata*) . = ALIGN(4); } > FLASH
-    .ARM.exidx : { *(.ARM.exidx*) } > FLASH
+    .ARM.exidx : {
+        PROVIDE(__exidx_start = .);
+        *(.ARM.exidx*)
+        PROVIDE(__exidx_end = .);
+    } > FLASH
 
     .data : {
         _sdata = .;
@@ -44,4 +48,5 @@ SECTIONS {
 }
 
 ASSERT((_sidata & 3) == 0, "Startup requires aligned data")
-ASSERT(_ebss + 148K <= __heap_end, "Insufficient room for Doom zone and libc heap")
+ASSERT(_ebss + (DEFINED(__fixfinder_minimum_heap) ? __fixfinder_minimum_heap : 148K) <= __heap_end,
+       "Insufficient room for the requested heap")
