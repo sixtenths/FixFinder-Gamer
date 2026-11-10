@@ -6,9 +6,9 @@ This kit targets the USB-C AutoZone FixFinder 5034VSM with a GD32F427ZK and PCB 
 
 | File | Purpose |
 | --- | --- |
-| [FixFinder-Arcade-Flash.bin](../downloads/FixFinder-Arcade-Flash.bin) | One SWD image at `0x08000000` with the bootloader, game verification record, display and board drivers, and six-game arcade. |
+| [FixFinder-Arcade-Flash.bin](../downloads/FixFinder-Arcade-Flash.bin) | One SWD image at `0x08000000` with the bootloader, game verification record, board drivers, Dino Run, and Neon Circuit. |
 | [FixFinder-USB-Loader.bin](../downloads/FixFinder-USB-Loader.bin) | The resident loader by itself for first-time SWD install at `0x08000000`. |
-| [FixFinder-Arcade.bin](../downloads/FixFinder-Arcade.bin) | Game image for the USB installer. Contains Snake, Maze Chase, Pong, Breakout, Neon Circuit, and Dino Run. |
+| [FixFinder-Arcade.bin](../downloads/FixFinder-Arcade.bin) | Dino Run and Neon Circuit as a game image for the USB installer. |
 | [SHA256SUMS](../downloads/SHA256SUMS) | Verify the downloads before flashing. |
 
 The drivers for the LCD, backlight, controls, LEDs, beeper, and USB are compiled into the firmware. The one-file image boots to the arcade and can accept future games over USB. The separate game image requires the resident loader. If you have the kit ZIP, look in its `firmware-bin` folder for the same choices and the Pixel Catcher example.
@@ -30,7 +30,7 @@ python scripts/Install-UsbGame.py --serial $serial --wait 45 downloads/FixFinder
 python scripts/View-FixFinderUsb.py --serial $serial
 ```
 
-The game slot holds one image at a time. Close the viewer before installing a different BIN. The six-game arcade uses **Erase** and **Down** to browse and **Enter** to launch. Hold **Down + Back** to return to its menu. Pixel Catcher uses **Back** and **Enter** for left and right, **Erase** for up, and **Down** for down. The viewer maps the arrow keys to those four buttons. [Controls and viewer](PLAY.md)
+The game slot holds one image at a time. Close the viewer before installing a different BIN. Use **Erase** and **Down** to browse and **Enter** to launch. Hold **Down + Back** to return to the menu. Pixel Catcher uses **Back** and **Enter** for left and right, **Erase** for up, and **Down** for down. The viewer maps the arrow keys to those four buttons. [Controls and viewer](PLAY.md)
 
 ## Build Doom with one command
 

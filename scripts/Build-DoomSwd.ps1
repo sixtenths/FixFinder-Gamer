@@ -12,11 +12,8 @@ param(
     [switch]$FixFinderLcd,
     [switch]$UsbGame,
     [switch]$Arcade,
-    [string[]]$PacmanRom,
     [switch]$StorageProbe,
     [switch]$EmmcLibrary,
-    [switch]$PacmanFromEmmc,
-    [string]$ProvisionLibrary,
     [string]$ProvisionDoomMaps,
     [switch]$PassThru
 )
@@ -24,13 +21,9 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($BoardSource -and $FixFinderLcd) { throw 'Select one display backend.' }
 if ($Arcade -and (!$UsbGame -or !$FixFinderLcd)) { throw '-Arcade requires -FixFinderLcd and -UsbGame.' }
-if ($PacmanRom -and !$Arcade) { throw '-PacmanRom requires -Arcade.' }
 if ($StorageProbe -and !$Arcade) { throw '-StorageProbe requires -Arcade.' }
 if ($EmmcLibrary -and !$Arcade) { throw '-EmmcLibrary requires -Arcade.' }
-if ($PacmanFromEmmc -and !$EmmcLibrary) { throw '-PacmanFromEmmc requires -EmmcLibrary.' }
-if ($ProvisionLibrary -and !$EmmcLibrary) { throw '-ProvisionLibrary requires -EmmcLibrary.' }
 if ($ProvisionDoomMaps -and !$EmmcLibrary) { throw '-ProvisionDoomMaps requires -EmmcLibrary.' }
-if ($ProvisionLibrary) { $ProvisionLibrary = (Resolve-Path -LiteralPath $ProvisionLibrary).Path }
 if ($ProvisionDoomMaps) { $ProvisionDoomMaps = (Resolve-Path -LiteralPath $ProvisionDoomMaps).Path }
 $source = (Resolve-Path -LiteralPath $EngineSource).Path
 $wad = (Resolve-Path -LiteralPath $ConvertedWad).Path
@@ -250,10 +243,6 @@ node->m_tnext = free_secnodes;
     $display = Join-Path $build 'display.o'
     if ($Arcade) {
         $platformFlags += '-DFIXFINDER_ARCADE'
-        if ($PacmanFromEmmc) {
-            $platformFlags += '-DFIXFINDER_PACMAN_EMMC'
-            if ($PacmanRom) { $platformFlags += '-DFIXFINDER_PACMAN_SEED' }
-        }
         if ($EmmcLibrary) {
             $platformFlags += '-DFIXFINDER_EMMC_LIBRARY'
             if ($ProvisionDoomMaps) {
@@ -272,22 +261,6 @@ fixfinder_maps_end:
                 Invoke-Gcc @('-c', $mapSource, '-o', $mapObject)
                 $boardObjects += $mapObject
             }
-            if ($ProvisionLibrary) {
-                $platformFlags += '-DFIXFINDER_PROVISION_LIBRARY'
-                $packSource = Join-Path $build 'library-pack.S'
-                $packObject = Join-Path $build 'library-pack.o'
-                $packPath = $ProvisionLibrary.Replace('\', '/')
-                @"
-.section .rodata.fixfinder_pack,"a",%progbits
-.global fixfinder_pack_start
-.global fixfinder_pack_end
-fixfinder_pack_start:
-.incbin "$packPath"
-fixfinder_pack_end:
-"@ | Set-Content -LiteralPath $packSource -Encoding ascii
-                Invoke-Gcc @('-c', $packSource, '-o', $packObject)
-                $boardObjects += $packObject
-            }
             foreach ($unit in @('firmware/doom-swd/game_library.c', 'firmware/doom-swd/storage/ff.c')) {
                 $object = Join-Path $build ((Split-Path -Leaf $unit) + '.o')
                 Invoke-Gcc ($platformFlags + @('-c', $unit, '-o', $object))
@@ -299,30 +272,6 @@ fixfinder_pack_end:
             $emmc = Join-Path $build 'emmc-probe.o'
             Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/emmc_probe.c', '-o', $emmc))
             $boardObjects += $emmc
-        }
-        if ($PacmanRom -or $PacmanFromEmmc) {
-            $platformFlags += '-DFIXFINDER_PACMAN'
-            if ($PacmanRom) {
-                $packedRom = Join-Path $build 'pacman.rom'
-                & python -B scripts/Pack-PacmanRom.py $packedRom @PacmanRom
-                if ($LASTEXITCODE -ne 0) { throw 'Could not pack Pac-Man ROMs.' }
-                $romSource = Join-Path $build 'pacman-rom.S'
-                $romObject = Join-Path $build 'pacman-rom.o'
-                $romPath = $packedRom.Replace('\', '/')
-                @"
-.section .rodata.pacman_rom,"a",%progbits
-.global pacman_rom
-pacman_rom:
-.incbin "$romPath"
-"@ | Set-Content -LiteralPath $romSource -Encoding ascii
-                Invoke-Gcc @('-c', $romSource, '-o', $romObject)
-                $boardObjects += $romObject
-            }
-            foreach ($unit in @('firmware/doom-swd/pacman.c', 'firmware/doom-swd/pacman/z80.c')) {
-                $object = Join-Path $build ((Split-Path -Leaf $unit) + '.o')
-                Invoke-Gcc ($platformFlags + @('-O3', '-c', $unit, '-o', $object))
-                $boardObjects += $object
-            }
         }
         $arcadeObject = Join-Path $build 'arcade.o'
         Invoke-Gcc ($platformFlags + @('-c', 'firmware/doom-swd/arcade.c', '-o', $arcadeObject))

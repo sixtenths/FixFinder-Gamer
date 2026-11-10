@@ -2,7 +2,7 @@
 
 This guide targets the USB-C AutoZone FixFinder **5034VSM** with a **GD32F427ZK** and PCB marking **`PCB_2L_5034_REVC_TYPEC_20200319`**. [Board photos and LCD notes](LCD.md)
 
-The downloadable kit includes a prebuilt loader, six arcade games, and a starter game. It also includes a single command to fetch the pinned DOOM inputs and build the first map for USB install. The full build steps are below. [Kit quick start](KIT.md)
+The downloadable kit includes a prebuilt loader, Dino Run, Neon Circuit, and a starter game. It also includes a single command to fetch the pinned DOOM inputs and build the first map for USB install. The full build steps are below. [Kit quick start](KIT.md)
 
 ## Identify your scanner
 
@@ -32,9 +32,9 @@ You don’t need a second scanner. The second unit in the [hardware notes](LCD.m
 
 ### What you gain and what you give up
 
-You get a playable E1M1 and six built-in arcade games on the original LCD and buttons, with LED and beeper feedback. The Windows viewer streams at the panel’s 320 × 240 resolution and lets you play with a keyboard. After the first SWD install, you can build and swap compatible game images over USB without reopening the case. This is also a way to learn embedded development on hardware you already own.
+You get Dino Run and Neon Circuit on the original LCD and buttons, with LED and beeper feedback. The DOOM build adds E1M1. The Windows viewer streams at the panel’s 320 × 240 resolution and lets you play with a keyboard. After the first SWD install, you can build and swap compatible game images over USB without reopening the case.
 
-You give up the scanner’s normal automotive functions while the arcade is installed. A failed flash may leave the scanner unable to boot and require another SWD session. If factory recovery matters, the practical cost could be a replacement diagnostic tool. The arcade also works within the scanner’s four-button layout and beeper. Later DOOM maps and the CHIP-8 pack require eMMC files; the included writer is locked to the development unit.
+You give up the scanner’s normal automotive functions while the arcade is installed. A failed flash may leave the scanner unable to boot and require another SWD session. If factory recovery matters, the practical cost could be a replacement diagnostic tool. Later DOOM maps require a matching eMMC pack. The included writer is locked to the development unit.
 
 ### What you need and what it costs
 
@@ -44,7 +44,7 @@ You give up the scanner’s normal automotive functions while the arcade is inst
 | Windows PC and USB-C data cable | Reuse what you have. The PC builds games and runs the USB installer and viewer. The cable also powers the scanner on the bench. |
 | Raspberry Pi with a populated GPIO header, power supply, and boot media | Borrow or reuse one for the first install and any SWD recovery. As a price reference, the project bench used a Pi 400; [Raspberry Pi lists it at US$60 for the unit](https://www.raspberrypi.com/news/more-memory-driven-price-rises/), before accessories, tax, and shipping. |
 | Three jumper leads and a screwdriver that fits your case | Reuse or buy them if needed. The [J5 photos](RECOVERY.md#find-the-j5-holes) show the no-solder setup. The jumpers must stay secure without being held during a write. |
-| Game data and tools | The build tools and DOOM 1.9 shareware are free; supply the matching `doom1.wad` locally. Original Pac-Man is optional and requires your own arcade ROM files. |
+| Game data and tools | The build tools and DOOM 1.9 shareware are free. The kit can fetch the pinned shareware inputs, or you can supply a matching `doom1.wad`. |
 | Bench time | Set aside at least an hour for a first attempt: open the case, set up the tools, make two flash reads, and test USB. Setup or debug problems can take longer. If SWD is unreliable, stop before flashing. |
 
 With the tools and cables on hand or borrowed, the conversion can cost **$0 out of pocket**. You can check the board and prepare the software before buying debug hardware.
@@ -168,18 +168,9 @@ python scripts/Install-UsbGame.py --serial $serial --wait 45 $game
 
 Wait for CRC verification and game launch. The slot holds one installable image, which can contain multiple games. If the loader does not appear, start the installer and reconnect the USB cable while it waits.
 
-## Optional games and eMMC
+## Check eMMC
 
-- **Midway Pac-Man.** Add `-PacmanRom $pacman` with local `pacman.zip` and, for split sets, `puckman.zip`. The build verifies the program, graphics, and color ROM checksums. Add `-PacmanFromEmmc` with `-EmmcLibrary` to load a previously provisioned `PACMAN.ROM` instead. The device-locked first-time writer takes both `-PacmanRom` and `-PacmanFromEmmc`. [MAME Midway manifest](https://github.com/mamedev/mame/blob/master/src/mame/pacman/pacman.cpp)
-- **CHIP-8 bonus pack.** The arcade reads `0:/FFARCADE.PAK` when built with `-EmmcLibrary`. The six-game pack uses the CC0 CHIP-8 Archive and C-Octo. Build it below, then use `-ProvisionLibrary build/fixfinder-library.bin` on the verified test scanner to create the file once. Omit that option when the file is already present. [CHIP-8 Archive](https://github.com/JohnEarnest/chip8Archive/tree/761e3ffc63f43e6a849e80714122feff2afca208) · [C-Octo](https://github.com/JohnEarnest/c-octo/tree/102994e6166236045a067efa930a88532510e03e)
-
-```powershell
-git clone https://github.com/JohnEarnest/chip8Archive.git build/chip8Archive
-git -C build/chip8Archive checkout 761e3ffc63f43e6a849e80714122feff2afca208
-python scripts/Pack-FixFinderLibrary.py build/chip8Archive build/fixfinder-library.bin
-```
-
-With the viewer closed, `python scripts/Read-FixFinderStorage.py --serial $serial` reports the eMMC capacity and registered bonus-game count.
+With the viewer closed, `python scripts/Read-FixFinderStorage.py --serial $serial` reports the eMMC capacity on builds with the storage probe enabled.
 
 ## Troubleshooting
 

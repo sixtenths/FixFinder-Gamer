@@ -23,7 +23,7 @@ enum game_id {
 #ifndef FIXFINDER_ARCADE_ONLY
     DOOM,
 #endif
-    SNAKE, MAZE, PONG, BREAKOUT, RACER, DINO, GAME_COUNT
+    RACER, DINO, GAME_COUNT
 };
 enum { W = DOOM_FRAME_WIDTH, H = DOOM_FRAME_HEIGHT };
 
@@ -69,20 +69,9 @@ static const struct {
 #elif !defined(FIXFINDER_ARCADE_ONLY)
     [DOOM] = {"DOOM", "ACTION", "E1M1 HANGAR", RED},
 #endif
-    [SNAKE] = {"SNAKE", "SURVIVAL", "FOUR KEYS STEER", GREEN},
-#ifdef FIXFINDER_PACMAN
-    [MAZE] = {"PAC MAN", "MIDWAY 1980", "ERASE AND ENTER TO START", YELLOW},
-#else
-    [MAZE] = {"MAZE CHASE", "MAZE", "EAT DOTS  DODGE GHOSTS", YELLOW},
-#endif
-    [PONG] = {"PONG", "SPORT", "ERASE UP  DOWN DOWN", BLUE},
-    [BREAKOUT] = {"BREAKOUT", "PADDLE", "BACK LEFT  ENTER RIGHT", PINK},
     [RACER] = {"NEON CIRCUIT", "RACING", "STEER  BOOST  BRAKE", ORANGE},
     [DINO] = {"DINO RUN", "RUNNER", "TAP A BUTTON TO JUMP", GREEN},
 };
-
-static const int dx[] = {1, 0, -1, 0};
-static const int dy[] = {0, 1, 0, -1};
 
 static void box(uint8_t *frame, int x, int y, int width, int height, uint8_t color)
 {
@@ -245,17 +234,6 @@ bool fixfinder_arcade_exit(uint32_t keys, uint32_t now)
     return holding && now - started >= 1000U;
 }
 
-static int direction(uint32_t keys, int fallback)
-{
-    switch (keys) {
-    case KEY_ENTER: return 0;
-    case KEY_DOWN: return 1;
-    case KEY_BACK: return 2;
-    case KEY_ERASE: return 3;
-    default: return fallback;
-    }
-}
-
 static void hud(uint8_t *frame, enum game_id game, unsigned int score)
 {
     memset(frame, BG, W*H);
@@ -283,233 +261,9 @@ static bool finish(uint8_t *frame, const volatile uint32_t *clock, bool won)
     }
 }
 
-static unsigned int random_cell(unsigned int *seed, unsigned int cells)
-{
-    *seed = *seed * 1664525U + 1013904223U;
-    return (*seed >> 16) % cells;
-}
-
-static void snake(uint8_t *frame, const volatile uint32_t *clock)
-{
-    enum { C = 28, R = 15, CELLS = C*R, TILE = 8 };
-    unsigned int seed = *clock;
-    bool won;
-    do {
-        uint16_t body[CELLS] = {7*C+7, 7*C+6, 7*C+5};
-        unsigned int length = 3, food = 7*C+16;
-        int heading = 0, next = 0;
-        uint32_t step = *clock + 190, food_flash = *clock;
-        bool redraw = true;
-        won = false;
-        for (;;) {
-            uint32_t now = *clock, keys = fixfinder_keys(now);
-            if (fixfinder_arcade_exit(keys, now)) return;
-            int turn = direction(keys, next);
-            if (((turn + 2) & 3) != heading) next = turn;
-            if ((int32_t)(now - step) >= 0) {
-                heading = next;
-                int x = body[0]%C + dx[heading], y = body[0]/C + dy[heading];
-                if (x < 0 || x >= C || y < 0 || y >= R) break;
-                unsigned int cell = y*C+x;
-                bool grow = cell == food;
-                unsigned int retained = length - !grow;
-                bool hit = false;
-                for (unsigned int i = 0; i < retained; ++i) hit |= body[i] == cell;
-                if (hit) break;
-                memmove(body+1, body, retained*sizeof *body);
-                body[0] = cell;
-                if (grow && ++length == CELLS) { won = true; break; }
-                if (grow) {
-                    food_flash = now + 220;
-                    do {
-                        food = random_cell(&seed, CELLS);
-                        hit = false;
-                        for (unsigned int i = 0; i < length; ++i) hit |= body[i] == food;
-                    } while (hit);
-                }
-                step = now + (length < 22 ? 190 - length*5 : 80);
-                redraw = true;
-            }
-            fixfinder_set_led((int32_t)(food_flash - now) > 0 ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
-            if (!redraw) {
-                doom_usb_video_capture_native_rows(usb_native_row, preview_row, frame, palette);
-                wait_until(clock,now+4);
-                continue;
-            }
-            hud(frame, SNAKE, length - 3);
-            box(frame, 7, 19, 226, 122, PANEL);
-            box(frame, 9+(food%C)*TILE, 21+(food/C)*TILE, 5, 5, RED);
-            for (unsigned int i = 0; i < length; ++i)
-                box(frame, 8+(body[i]%C)*TILE, 20+(body[i]/C)*TILE, 7, 7, i ? GREEN : WHITE);
-            present(frame);
-            redraw = false;
-        }
-    } while (finish(frame, clock, won));
-}
-
-#ifdef FIXFINDER_PACMAN
-bool fixfinder_pacman_run(uint8_t *frame, const volatile uint32_t *clock);
-#else
-/* A compact original maze. Spaces are traversable and dots are collectible. */
-static const char maze_map[][22] = {
-    "#####################",
-    "#o........#........o#",
-    "#.###.###.#.###.###.#",
-    "#...................#",
-    "#.###.#.#####.#.###.#",
-    "#.....#...#...#.....#",
-    "###.#.###.#.###.#.###",
-    "#...#...........#...#",
-    "#.#.#.#.#####.#.#.#.#",
-    "#.#...#... ...#...#.#",
-    "#.###.#.#####.#.###.#",
-    "#...................#",
-    "#.###.###.#.###.###.#",
-    "#o........#........o#",
-    "#####################",
-};
-
-static bool maze_open(int x, int y)
-{
-    return x >= 0 && x < 21 && y >= 0 && y < 15 && maze_map[y][x] != '#';
-}
-
-static void maze(uint8_t *frame, const volatile uint32_t *clock)
-{
-    do {
-        char dots[15][22];
-        memcpy(dots, maze_map, sizeof dots);
-        unsigned int left = 0, score = 0;
-        for (int y = 0; y < 15; ++y)
-            for (int x = 0; x < 21; ++x)
-                left += dots[y][x] == '.' || dots[y][x] == 'o';
-        int x = 10, y = 11, heading = 2, next = 2, lives = 3;
-        int gx[2] = {1,19}, gy[2] = {7,7}, gd[2] = {0,2};
-        uint32_t step = *clock + 130, power_until = *clock, safe_until = *clock + 900;
-        unsigned int turns = 0;
-        while (left && lives) {
-            uint32_t now = *clock, keys = fixfinder_keys(now);
-            if (fixfinder_arcade_exit(keys, now)) return;
-            next = direction(keys, next);
-            bool powered = (int32_t)(power_until - now) > 0;
-            if ((int32_t)(now-step) >= 0) {
-                if (maze_open(x+dx[next], y+dy[next])) heading = next;
-                if (maze_open(x+dx[heading], y+dy[heading])) { x+=dx[heading]; y+=dy[heading]; }
-                if (dots[y][x] == '.' || dots[y][x] == 'o') {
-                    if (dots[y][x] == 'o') { power_until = now+5500; powered = true; }
-                    dots[y][x] = ' ';
-                    --left; ++score;
-                }
-                if (++turns % 2 == 0) for (int g = 0; g < 2; ++g) {
-                    int best = 1000, move = -1;
-                    for (int d = 0; d < 4; ++d) {
-                        int nx = gx[g]+dx[d], ny = gy[g]+dy[d];
-                        if (!maze_open(nx, ny)) continue;
-                        int ax = nx-x, ay = ny-y;
-                        int dist = (ax<0?-ax:ax)+(ay<0?-ay:ay);
-                        int rank = (powered ? -dist : dist) + (d == ((gd[g]+2)&3) ? 80 : 0);
-                        if (rank < best) { best = rank; move = d; }
-                    }
-                    if (move >= 0) { gd[g]=move; gx[g]+=dx[move]; gy[g]+=dy[move]; }
-                }
-                step = now+125;
-            }
-            for (int g=0; g<2; ++g) if (gx[g]==x && gy[g]==y) {
-                if (powered) { gx[g]=g?19:1; gy[g]=7; score+=10; }
-                else if ((int32_t)(now-safe_until)>=0) {
-                    --lives; x=10; y=11; safe_until=now+1400;
-                }
-            }
-            fixfinder_set_led(lives <= 1 ? FIXFINDER_LED_RED :
-                              lives == 2 || powered ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
-            hud(frame, MAZE, score);
-            for (int row=0; row<15; ++row) for (int col=0; col<21; ++col) {
-                int px=36+col*8, py=19+row*8;
-                if (dots[row][col]=='#') box(frame,px,py,8,8,BLUE);
-                if (dots[row][col]=='.') box(frame,px+3,py+3,2,2,MUTED);
-                if (dots[row][col]=='o') box(frame,px+2,py+2,4,4,WHITE);
-            }
-            box(frame,37+x*8,20+y*8,6,6,YELLOW);
-            box(frame,37+x*8+(heading==0?4:0),22+y*8,2,2,BG);
-            for (int g=0; g<2; ++g) box(frame,37+gx[g]*8,20+gy[g]*8,6,6,powered?MUTED:(g?PINK:RED));
-            for (int i=0;i<lives;++i) box(frame,12,25+10*i,5,5,YELLOW);
-            present(frame);
-            wait_until(clock,now+32);
-        }
-        if (!finish(frame, clock, left==0)) return;
-    } while (true);
-}
-
-#endif
-
 static int clamp(int value, int lo, int hi)
 {
     return value < lo ? lo : value > hi ? hi : value;
-}
-
-static void paddle_game(uint8_t *frame, const volatile uint32_t *clock, bool bricks)
-{
-    /* Half-pixel coordinates keep the same movement speed at twice the tick rate. */
-    enum { P = 2 };
-    do {
-        int player = 65*P, opponent = 65*P, x = 120*P, y = 85*P, vx = -3, vy = 2;
-        unsigned int score = 0, other = 0;
-        uint16_t rows[4] = {0x3ff,0x3ff,0x3ff,0x3ff};
-        if (bricks) player = 105*P;
-        while (score < (bricks ? 40U : 5U) && other < (bricks ? 3U : 5U)) {
-            uint32_t now = *clock, keys = fixfinder_keys(now);
-            if (fixfinder_arcade_exit(keys, now)) return;
-            if (bricks) {
-                if (keys == KEY_BACK) player -= 5;
-                if (keys == KEY_ENTER) player += 5;
-                player = clamp(player, 8*P, 199*P);
-            } else {
-                if (keys == KEY_ERASE) player -= 5;
-                if (keys == KEY_DOWN) player += 5;
-                player = clamp(player, 20*P, 117*P);
-                opponent = clamp(opponent + (y < opponent+10*P ? -2 : 2), 20*P, 117*P);
-            }
-            x += vx; y += vy;
-            if (y <= 20*P) { y=20*P; vy=2; }
-            if (!bricks && y >= 137*P) { y=137*P; vy=-2; }
-            if (bricks) {
-                if (x <= 8*P || x >= 228*P) { x=clamp(x,8*P,228*P); vx=-vx; }
-                if (vy > 0 && y >= 130*P && y <= 135*P && x+4*P >= player && x < player+32*P) vy=-2;
-                if (y >= 141*P) { ++other; x=120*P; y=94*P; vy=-2; }
-                if (y >= 30*P && y < 66*P && x >= 19*P && x < 219*P) {
-                    int row=(y-30*P)/(9*P), col=(x-19*P)/(20*P);
-                    if (rows[row] & (1U << col)) { rows[row] ^= 1U << col; ++score; vy=-vy; }
-                }
-            } else {
-                if (vx<0 && x<=17*P && x>=11*P && y+4*P>=player && y<player+23*P) vx=3;
-                if (vx>0 && x>=219*P && x<=225*P && y+4*P>=opponent && y<opponent+23*P) vx=-3;
-                if (x<6*P || x>230*P) {
-                    if (x<6*P) ++other; else ++score;
-                    vx = x<6*P ? 3 : -3;
-                    x=120*P; y=80*P;
-                }
-            }
-            fixfinder_set_led(bricks && other >= 2 ? FIXFINDER_LED_RED :
-                              other > (bricks ? 0 : score) ? FIXFINDER_LED_YELLOW : FIXFINDER_LED_GREEN);
-            hud(frame,bricks?BREAKOUT:PONG,score);
-            number(183, 2, bricks ? 3-other : other);
-            box(frame, 7, 18, 226, 2, PANEL);
-            box(frame, 7, 141, 226, 2, PANEL);
-            if (bricks) {
-                for (int row=0; row<4; ++row) for (int col=0; col<10; ++col)
-                    if (rows[row] & (1U << col)) box(frame,19+col*20,30+row*9,18,7,RED+row);
-                box(frame,player/P,134,32,4,WHITE);
-            } else {
-                for (int i=24;i<137;i+=9) box(frame,119,i,2,5,PANEL);
-                box(frame,12,player/P,4,23,GREEN);
-                box(frame,224,opponent/P,4,23,ORANGE);
-            }
-            box(frame,x/P,y/P,4,4,WHITE);
-            present(frame);
-            wait_until(clock,now+16);
-        }
-        if (!finish(frame,clock,score==(bricks?40U:5U))) return;
-    } while (true);
 }
 
 static void import_colors(unsigned int start, const uint16_t *colors, unsigned int count)
@@ -578,46 +332,6 @@ static void illustration(uint8_t *frame, int x, int y, enum game_id game)
         art(frame,x+2,y+1,76,47,DOOM_LOGO_WIDTH,DOOM_LOGO_HEIGHT,doom_art,DOOM_ART,13,INSET);
         break;
 #endif
-    case SNAKE:
-        box(frame,x+10,y+30,34,7,GREEN);
-        box(frame,x+36,y+14,8,22,GREEN);
-        box(frame,x+43,y+14,15,8,GREEN);
-        box(frame,x+52,y+15,2,2,BG);
-        box(frame,x+66,y+15,5,5,RED);
-        box(frame,x+67,y+13,2,2,WHITE);
-        break;
-    case MAZE:
-        box(frame,x+5,y+5,70,2,BLUE);
-        box(frame,x+5,y+41,70,2,BLUE);
-        for (int row=0; row<18; ++row) {
-            int edge=row<3?3-row:row>14?row-14:0;
-            int mouth=5-(row<9?9-row:row-9);
-            box(frame,x+11+edge,y+15+row,18-edge*2-(mouth>0?mouth:0),1,YELLOW);
-        }
-        for (int i=0; i<3; ++i) box(frame,x+33+i*7,y+23,2,2,WHITE);
-        box(frame,x+55,y+17,14,15,PINK);
-        box(frame,x+58,y+14,8,4,PINK);
-        box(frame,x+58,y+20,3,4,WHITE);
-        box(frame,x+64,y+20,3,4,WHITE);
-        box(frame,x+58,y+20,1,2,BG);
-        box(frame,x+64,y+20,1,2,BG);
-        break;
-    case PONG:
-        for (int row=3; row<46; row+=6) box(frame,x+39,y+row,2,3,EDGE);
-        box(frame,x+10,y+23,4,17,BLUE);
-        box(frame,x+66,y+9,4,17,ORANGE);
-        box(frame,x+47,y+17,4,4,WHITE);
-        box(frame,x+40,y+22,2,2,MUTED);
-        box(frame,x+34,y+27,1,1,MUTED);
-        break;
-    case BREAKOUT: {
-        static const uint8_t brick[]={RED,PINK,ORANGE};
-        for (int row=0; row<3; ++row) for (int col=0; col<5; ++col)
-            if (row<2 || col!=2) box(frame,x+8+13*col,y+7+7*row,11,5,brick[row]);
-        box(frame,x+43,y+29,3,3,WHITE);
-        box(frame,x+32,y+38,22,4,BLUE);
-        break;
-    }
     case RACER:
         for (int row=-10;row<=10;++row) {
             int half=10-abs(row)/2;
@@ -677,16 +391,11 @@ static void splash(uint8_t *frame, const volatile uint32_t *clock, enum game_id 
     } while (*clock-start<LOAD_MS);
 }
 
-static void selector(uint8_t *frame, unsigned int selected, unsigned int total)
+static void selector(uint8_t *frame, unsigned int selected)
 {
     memset(frame,BG,W*H);
     reset_labels(true);
-    uint8_t accent=selected<GAME_COUNT?games[selected].color:GREEN;
-    const char *name=selected<GAME_COUNT?games[selected].name:"";
-    const char *genre=selected<GAME_COUNT?games[selected].genre:"CHIP 8";
-#ifdef FIXFINDER_EMMC_LIBRARY
-    if (selected>=GAME_COUNT) name=fixfinder_library_title(selected-GAME_COUNT);
-#endif
+    uint8_t accent = games[selected].color;
     box(frame,0,26,W,96,PANEL);
     box(frame,0,26,W,1,EDGE);
     box(frame,0,121,W,1,EDGE);
@@ -703,20 +412,13 @@ static void selector(uint8_t *frame, unsigned int selected, unsigned int total)
         art(frame,74,30,92,56,DOOM_LOGO_WIDTH,DOOM_LOGO_HEIGHT,doom_art,DOOM_ART,13,PANEL);
     } else
 #endif
-    if (selected<GAME_COUNT) {
-        illustration(frame,80,34,selected);
-    } else {
-        box(frame,101,44,38,32,INSET);
-        for (int pin=0;pin<5;++pin) {
-            box(frame,96,47+pin*6,5,2,GREEN);
-            box(frame,139,47+pin*6,5,2,GREEN);
-        }
-        text(120, 53, "8-bit", &ui_small, GREEN, INSET, true);
+    {
+        illustration(frame, 80, 34, selected);
     }
-    title(86,name);
-    text(120, 105, genre, &ui_small, accent, PANEL, true);
-    for (unsigned int i=0;i<total;++i)
-        box(frame,120-(total*10-4)/2+i*10,129,6,3,i==selected?accent:EDGE);
+    title(86, games[selected].name);
+    text(120, 105, games[selected].genre, &ui_small, accent, PANEL, true);
+    for (unsigned int i = 0; i < GAME_COUNT; ++i)
+        box(frame, 120 - (GAME_COUNT * 10 - 4) / 2 + i * 10, 129, 6, 3, i == selected ? accent : EDGE);
     text(12, 142, "Erase  Prev", &ui_small, MUTED, BG, false);
     text(86, 142, "Down  Next", &ui_small, MUTED, BG, false);
     box(frame,166,140,62,17,accent);
@@ -726,12 +428,8 @@ static void selector(uint8_t *frame, unsigned int selected, unsigned int total)
 void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
 {
     unsigned int selected=0;
-    unsigned int total=GAME_COUNT;
 #ifdef FIXFINDER_EMMC_LIBRARY
-    total+=fixfinder_library_init();
-#ifdef FIXFINDER_PACMAN_EMMC
-    (void)fixfinder_library_read_pacman(frame, PACMAN_ROM_SIZE);
-#endif
+    fixfinder_library_mount();
 #endif
     uint32_t previous=KEY_BACK|KEY_DOWN|KEY_ENTER|KEY_ERASE;
     memcpy(palette,base_palette,sizeof palette);
@@ -747,34 +445,15 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
         uint32_t now=*clock, keys=fixfinder_keys(now);
         if (keys!=previous) {
             if (keys==KEY_ERASE) {
-                selected=(selected+total-1)%total;
+                selected=(selected+GAME_COUNT-1)%GAME_COUNT;
                 redraw = true;
             }
             if (keys==KEY_DOWN) {
-                selected=(selected+1)%total;
+                selected=(selected+1)%GAME_COUNT;
                 redraw = true;
             }
             if (keys==KEY_ENTER && previous==0) {
                 fixfinder_set_led(FIXFINDER_LED_YELLOW);
-#ifdef FIXFINDER_EMMC_LIBRARY
-                if (selected>=GAME_COUNT) {
-                    header(frame);
-                    box(frame,20,43,200,76,PANEL);
-                    title(62,fixfinder_library_title(selected-GAME_COUNT));
-                    text(120, 90, "Loading game", &ui_small, GREEN, PANEL, true);
-                    present(frame);
-                    wait_until(clock,now+550);
-                    release_lcd_shadow();
-                    if (!fixfinder_library_play(selected-GAME_COUNT,frame,clock)) {
-                        fixfinder_set_led(FIXFINDER_LED_RED);
-                        text(120, 105, "Could not read game", &ui_small, RED, PANEL, true);
-                        present(frame);
-                        wait_until(clock,*clock+1000);
-                    }
-                    doom_display_set_palette(palette);
-                } else
-#endif
-                {
                 splash(frame,clock,selected);
                 release_lcd_shadow();
                 switch (selected) {
@@ -796,23 +475,6 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                     return;
 #endif
 #endif
-                case SNAKE: snake(frame,clock); break;
-                case MAZE:
-#ifdef FIXFINDER_PACMAN
-                    if (!fixfinder_pacman_run(frame,clock)) {
-                        fixfinder_set_led(FIXFINDER_LED_RED);
-                        doom_display_set_palette(palette);
-                        text(120, 125, "Could not load Pac-Man ROM", &ui_small, RED, PANEL, true);
-                        present(frame);
-                        wait_until(clock,*clock+1200);
-                    }
-                    doom_display_set_palette(palette);
-#else
-                    maze(frame,clock);
-#endif
-                    break;
-                case PONG: paddle_game(frame,clock,false); break;
-                case BREAKOUT: paddle_game(frame,clock,true); break;
                 case DINO: {
                     unsigned int score;
                     while (fixfinder_dino_run(clock,&score)) {
@@ -834,7 +496,6 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
                     break;
                 }
                 }
-                }
                 keys=fixfinder_keys(*clock);
                 redraw = true;
             }
@@ -842,7 +503,7 @@ void fixfinder_arcade_run(uint8_t *frame, const volatile uint32_t *clock)
         }
         if (redraw) {
             fixfinder_set_led(FIXFINDER_LED_OFF);
-            selector(frame,selected,total);
+            selector(frame,selected);
             present(frame);
             redraw = false;
         } else {

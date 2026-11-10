@@ -80,19 +80,26 @@ static void provision_doom_maps(void)
 }
 #endif
 
-unsigned int fixfinder_library_init(void)
+bool fixfinder_library_mount(void)
 {
-    count=0;
     FRESULT rc=f_mount(&fs,"0:",1);
     if (rc!=FR_OK || fs.fs_type!=FS_FAT32) {
         fixfinder_library_status(0x100u+rc,0);
-        return 0;
+        return false;
     }
+    fixfinder_library_status(1,0);
 #ifdef FIXFINDER_PROVISION_DOOM_MAPS
     provision_doom_maps();
 #endif
+    return true;
+}
+
+unsigned int fixfinder_library_init(void)
+{
+    count=0;
+    if (!fixfinder_library_mount()) return 0;
     FIL f;
-    rc=f_open(&f,file_name,FA_READ);
+    FRESULT rc=f_open(&f,file_name,FA_READ);
 #ifdef FIXFINDER_PROVISION_LIBRARY
     if (rc==FR_NO_FILE && provision("0:/FFARCADE.TMP",file_name,fixfinder_pack_start,
         (uintptr_t)fixfinder_pack_end-(uintptr_t)fixfinder_pack_start))
